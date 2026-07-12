@@ -63,8 +63,34 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
     url,
   ]);
 
-  // Extract mono, low-bitrate audio for transcription.
-  await run("ffmpeg", ["-y", "-i", videoPath, "-vn", "-ac", "1", "-b:a", "48k", audioPath]);
+  // Extract mono, low-bitrate audio for transcription (16kHz is what Whisper uses).
+  await run("ffmpeg", ["-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", audioPath]);
 
   return { videoPath, audioPath, workDir, title, durationS };
+}
+
+/**
+ * Extract a small mono audio track (mp3) straight from a media URL (an uploaded
+ * file's signed URL, or a direct media link) so transcription stays tiny even for
+ * long sources. ffmpeg reads the https URL directly.
+ */
+export async function extractAudio(
+  sourceUrl: string
+): Promise<{ audioPath: string; workDir: string }> {
+  const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "audio-"));
+  const audioPath = path.join(workDir, "audio.mp3");
+  await run("ffmpeg", [
+    "-y",
+    "-i",
+    sourceUrl,
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-b:a",
+    "32k",
+    audioPath,
+  ]);
+  return { audioPath, workDir };
 }

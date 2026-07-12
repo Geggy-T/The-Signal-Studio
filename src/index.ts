@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import express from "express";
 import { RenderSpecSchema } from "./types.js";
 import { renderClip } from "./render.js";
-import { downloadUrl } from "./download.js";
+import { downloadUrl, extractAudio } from "./download.js";
 import { putToSignedUrl } from "./supabase.js";
 
 const app = express();
@@ -18,6 +18,32 @@ function authed(req: express.Request): boolean {
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "signal-render-worker" }));
+
+/**
+ * Extract a small mono audio track from a media URL (an uploaded file's signed URL,
+ * or a direct media link) and PUT it to a signed upload URL — so transcription stays
+ * tiny even for long sources. Body: { source_url, audio_put_url }
+ */
+app.post("/extract-audio", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const { source_url, audio_put_url } = req.body ?? {};
+  if (!source_url || !audio_put_url) {
+    return res.status(400).json({ error: "source_url and audio_put_url are required" });
+  }
+  let workDir: string | null = null;
+  try {
+    const out = await extractAudio(String(source_url));
+    workDir = out.workDir;
+    const audioBuf = await fs.readFile(out.audioPath);
+    await putToSignedUrl(String(audio_put_url), audioBuf, "audio/mpeg");
+    res.json({ status: "done", audio_bytes: audioBuf.byteLength });
+  } catch (err: unknown) {
+    console.error("[extract-audio] failed", err);
+    res.status(500).json({ status: "failed", error: String((err as Error)?.message || err) });
+  } finally {
+    if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
 
 /**
  * Download a video URL (YouTube etc.) via yt-dlp and PUT the resulting video + audio
