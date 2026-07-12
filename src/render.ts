@@ -64,10 +64,18 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   await measureAudioDurations(spec);
   const inputProps = { spec };
 
+  // Software rendering (Railway has no GPU) + generous per-frame timeout.
+  const chromiumOptions = { gl: "swiftshader" as const };
+  const FRAME_TIMEOUT = 120_000;
+  // Cap concurrency so a small container doesn't thrash / OOM. Override via env.
+  const concurrency = Number(process.env.RENDER_CONCURRENCY || 2);
+
   const composition = await selectComposition({
     serveUrl,
     id: "SignalClip",
     inputProps,
+    chromiumOptions,
+    timeoutInMilliseconds: FRAME_TIMEOUT,
   });
 
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "signal-"));
@@ -80,9 +88,10 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     codec: "h264",
     outputLocation: outFile,
     inputProps,
-    // 9:16 shorts: keep it crisp but not huge.
-    crf: 20,
-    concurrency: null, // let Remotion decide based on the machine
+    crf: 23,
+    concurrency,
+    chromiumOptions,
+    timeoutInMilliseconds: FRAME_TIMEOUT,
   });
 
   await renderStill({
@@ -92,6 +101,8 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     frame: Math.floor(composition.durationInFrames * 0.5),
     inputProps,
     imageFormat: "jpeg",
+    chromiumOptions,
+    timeoutInMilliseconds: FRAME_TIMEOUT,
   });
 
   const id = spec.clip_candidate_id || randomUUID();

@@ -158,26 +158,14 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
         {spec.audio.hook_url ? <Audio src={spec.audio.hook_url} /> : null}
       </Sequence>
 
-      {/* 2 — THE CLIP (evidence) */}
+      {/* 2 — THE CLIP (evidence) — full frame on brand letterbox (no GPU-heavy blur) */}
       <Sequence from={hookFrames} durationInFrames={clipFrames}>
-        <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
-          {/* Blurred fill so widescreen sources don't leave empty bars */}
-          <OffthreadVideo
-            src={spec.source_url}
-            startFrom={s(spec.t_in)}
-            endAt={s(spec.t_out)}
-            muted
-            volume={0}
-            style={{
-              position: "absolute",
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              filter: "blur(32px) brightness(0.4)",
-              transform: "scale(1.15)",
-            }}
-          />
-          {/* The full source frame, never cropped */}
+        <AbsoluteFill
+          style={{
+            background: `radial-gradient(ellipse at center, #17191c 0%, ${spec.brand.bg} 75%)`,
+          }}
+        >
+          {/* The full source frame, never cropped — single decode for performance */}
           <OffthreadVideo
             src={spec.source_url}
             startFrom={s(spec.t_in)}
