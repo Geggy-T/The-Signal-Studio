@@ -8,8 +8,8 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import type { RenderSpec, Word } from "../types.js";
-import { FPS, HOOK_SECONDS, TAKEAWAY_SECONDS } from "../types.js";
+import type { RenderSpec, Word } from "../types";
+import { FPS, HOOK_SECONDS, TAKEAWAY_SECONDS } from "../types";
 
 const s = (sec: number) => Math.round(sec * FPS);
 

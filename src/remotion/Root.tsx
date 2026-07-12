@@ -1,6 +1,6 @@
 import React from "react";
 import { Composition } from "remotion";
-import { SignalClip } from "./SignalClip.js";
+import { SignalClip } from "./SignalClip";
 import {
   FPS,
   HEIGHT,
@@ -9,7 +9,7 @@ import {
   TAKEAWAY_SECONDS,
   WIDTH,
   type RenderSpec,
-} from "../types.js";
+} from "../types";
 
 // A harmless default so the composition also opens in `remotion studio`.
 const defaultSpec: RenderSpec = RenderSpecSchema.parse({
