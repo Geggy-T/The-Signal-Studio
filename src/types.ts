@@ -128,6 +128,27 @@ export interface TimelineItem {
  * take (source silent), then resumes. Speaker and Matt never talk at once.
  * Order: [speaker] → [Matt] → [speaker] → [Matt] → … → [takeaway card].
  */
+/**
+ * Snap a desired clip-relative cut time to the next natural pause in speech,
+ * so Matt only cuts in AFTER the speaker finishes their phrase (never mid-sentence).
+ */
+function snapToPause(spec: RenderSpec, pClip: number): number {
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const words = spec.captions;
+  if (!words.length) return pClip;
+  const abs = spec.t_in + pClip;
+  const i = words.findIndex((w) => w.end >= abs);
+  if (i === -1) return pClip;
+  const windowEnd = abs + 4.5; // look ahead up to ~4.5s for a sentence/clause break
+  for (let k = i; k < words.length - 1; k++) {
+    if (words[k].end > windowEnd) break;
+    const gap = words[k + 1].start - words[k].end;
+    if (gap > 0.3) return Math.min(C - 0.3, words[k].end - spec.t_in + 0.12);
+  }
+  // Fallback: at least land on the end of the current word, not mid-word.
+  return Math.min(C - 0.3, words[i].end - spec.t_in + 0.08);
+}
+
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
   const C = Math.max(1, spec.t_out - spec.t_in);
   const INSERT_PAD = 0.5;
@@ -142,7 +163,7 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   // so the speaker always makes their point first (never talked over at the open).
   if (spec.audio.hook_url || spec.hook_text) {
     reactions.push({
-      at: Math.min(3.5, C * 0.25),
+      at: snapToPause(spec, Math.min(3.5, C * 0.25)),
       dur: (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD,
       url: spec.audio.hook_url,
       text: spec.hook_text || spec.title,
@@ -150,7 +171,7 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   }
   for (const it of spec.audio.interjections) {
     reactions.push({
-      at: it.at,
+      at: snapToPause(spec, it.at),
       dur: (it.duration_s ?? 3) + INSERT_PAD,
       url: it.url,
       text: it.text ?? "",

@@ -12,6 +12,7 @@ import type { RenderSpec, Word } from "../types";
 import { FPS, buildTimeline, deAI } from "../types";
 
 const s = (sec: number) => Math.round(sec * FPS);
+const MATT_VOLUME = 0.7; // Matt's VO sits under the source, not over it
 const FONT = "'Space Grotesk', system-ui, sans-serif";
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
@@ -234,14 +235,14 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
             return (
               <Series.Sequence key={i} durationInFrames={frames}>
                 <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} />
-                {it.url ? <Audio src={it.url} /> : null}
+                {it.url ? <Audio src={it.url} volume={MATT_VOLUME} /> : null}
               </Series.Sequence>
             );
           }
           return (
             <Series.Sequence key={i} durationInFrames={frames}>
               <TakeawayCard spec={spec} />
-              {spec.audio.takeaway_url ? <Audio src={spec.audio.takeaway_url} /> : null}
+              {spec.audio.takeaway_url ? <Audio src={spec.audio.takeaway_url} volume={MATT_VOLUME} /> : null}
             </Series.Sequence>
           );
         })}
