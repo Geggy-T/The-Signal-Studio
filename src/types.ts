@@ -187,23 +187,25 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     });
   }
 
-  // 2) REACTIONS — interjections only, each snapped to the end of a sentence so Matt
-  //    reacts AFTER the speaker finishes a point (never mid-thought).
+  // 2) REACTIONS — spread evenly across the clip so the speaker gets a real run
+  //    before each cut-in, then snapped to a sentence end. Ignore the model's raw
+  //    timestamps (they cluster); we place them ourselves.
   type R = { at: number; dur: number; url?: string | null; text: string };
-  const reactions: R[] = spec.audio.interjections.map((it) => ({
-    at: snapToPause(spec, it.at),
-    dur: (it.duration_s ?? 3) + INSERT_PAD,
-    url: it.url,
-    text: it.text ?? "",
-  }));
-  reactions.sort((a, b) => a.at - b.at);
-  let last = 1.0;
+  const MIN_SEG = 12; // aim for ~12s+ of speaker between cut-ins
+  const HARD_MIN = 8; // never less than this
+  const raw = spec.audio.interjections;
+  const maxReactions = Math.max(0, Math.floor(C / MIN_SEG) - 1);
+  const M = Math.min(raw.length, maxReactions);
   const valid: R[] = [];
-  for (const r of reactions) {
-    const at = Math.min(Math.max(r.at, last + 1.0), C - 0.4);
-    if (!Number.isFinite(at) || at <= last) continue;
-    valid.push({ ...r, at });
-    last = at;
+  let prev = 0;
+  for (let i = 0; i < M; i++) {
+    const target = ((i + 1) / (M + 1)) * C; // even split points
+    let at = snapToPause(spec, target);
+    at = Math.max(at, prev + HARD_MIN);
+    if (at > C - HARD_MIN) break; // leave the speaker a real final stretch
+    const it = raw[i];
+    valid.push({ at, dur: (it.duration_s ?? 3) + INSERT_PAD, url: it.url, text: it.text ?? "" });
+    prev = at;
   }
 
   // 3) Interleave clean source segments with the reaction inserts, then the takeaway.

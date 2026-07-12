@@ -34,7 +34,28 @@ const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
   </div>
 );
 
-/** Word-by-word captions of the SOURCE, on a dark band for readability. */
+type Chunk = { start: number; end: number; words: Word[] };
+
+/** Group words into short, stable phrases (~3-4 words) so captions are readable. */
+function chunkWords(words: Word[]): Chunk[] {
+  const chunks: Chunk[] = [];
+  let cur: Word[] = [];
+  let curStart = words[0]?.start ?? 0;
+  for (const w of words) {
+    if (cur.length === 0) curStart = w.start;
+    cur.push(w);
+    const dur = w.end - curStart;
+    const endsSentence = /[.!?]["')\]]?$/.test((w.text || "").trim());
+    if (cur.length >= 4 || dur >= 1.7 || endsSentence) {
+      chunks.push({ start: curStart, end: w.end, words: cur });
+      cur = [];
+    }
+  }
+  if (cur.length) chunks.push({ start: curStart, end: cur[cur.length - 1].end, words: cur });
+  return chunks;
+}
+
+/** Phrase-chunk captions of the SOURCE, on a dark band for readability. */
 const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }> = ({
   words,
   clipStart,
@@ -43,9 +64,13 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
   const frame = useCurrentFrame();
   const tAbs = clipStart + frame / FPS;
   if (words.length === 0) return null;
-  const idx = words.findIndex((w) => tAbs >= w.start && tAbs < w.end);
-  const active = idx === -1 ? 0 : idx;
-  const win = words.slice(Math.max(0, active - 3), active + 4);
+  const chunks = chunkWords(words);
+  // Current chunk = the one containing tAbs, else the most recent one that has started.
+  let chunk = chunks.find((c) => tAbs >= c.start && tAbs < c.end);
+  if (!chunk) {
+    for (const c of chunks) if (c.start <= tAbs) chunk = c;
+  }
+  if (!chunk) chunk = chunks[0];
   return (
     <div
       style={{
@@ -64,25 +89,24 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "center",
-          gap: "4px 16px",
-          maxWidth: "94%",
-          padding: "18px 28px",
+          gap: "6px 16px",
+          maxWidth: "90%",
+          padding: "20px 30px",
           borderRadius: 22,
-          backgroundColor: "rgba(9, 11, 13, 0.72)",
+          backgroundColor: "rgba(9, 11, 13, 0.74)",
         }}
       >
-        {win.map((w, i) => {
-          const isActive = words.indexOf(w) === active;
+        {chunk.words.map((w, i) => {
+          const isActive = tAbs >= w.start && tAbs < w.end;
           const text = w.text.replace(/[—–―]/g, "");
           return (
             <span
               key={`${w.start}-${i}`}
               style={{
-                fontSize: 58,
+                fontSize: 62,
                 fontWeight: 800,
-                lineHeight: 1.1,
+                lineHeight: 1.12,
                 color: isActive ? spec.brand.accent : spec.brand.text,
-                opacity: isActive ? 1 : 0.85,
                 WebkitTextStroke: "1px rgba(0,0,0,0.55)",
                 textShadow: "0 2px 10px rgba(0,0,0,0.9)",
               }}
