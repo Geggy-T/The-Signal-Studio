@@ -1,0 +1,26 @@
+{
+  "clip_candidate_id": "sample-0001",
+  "source_url": "https://storage.googleapis.com/remotion-assets/bigbuckbunny.mp4",
+  "t_in": 5,
+  "t_out": 30,
+  "captions": [
+    { "text": "This", "start": 5.0, "end": 5.3 },
+    { "text": "is", "start": 5.3, "end": 5.5 },
+    { "text": "a", "start": 5.5, "end": 5.6 },
+    { "text": "sample", "start": 5.6, "end": 6.1 },
+    { "text": "caption", "start": 6.1, "end": 6.7 }
+  ],
+  "audio": {
+    "hook_url": null,
+    "takeaway_url": null,
+    "interjections": []
+  },
+  "title": "The one line that matters",
+  "hook_text": "Everyone missed the real signal in this clip.",
+  "takeaway_text": "Noise off.",
+  "brand": {
+    "bg": "#0f1113",
+    "accent": "#F5A623",
+    "channel_name": "The Signal"
+  }
+}
