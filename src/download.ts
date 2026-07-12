@@ -59,6 +59,9 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
   const audioPath = path.join(workDir, "audio.mp3");
   const ck = await cookieArgs();
 
+  // Player clients that reliably expose downloadable formats on current YouTube.
+  const ytArgs = ["--extractor-args", "youtube:player_client=default,web_safari,ios"];
+
   // Fetch metadata (title, duration) without downloading.
   let title = "";
   let durationS: number | null = null;
@@ -67,6 +70,7 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
       "--no-playlist",
       "--dump-single-json",
       "--no-warnings",
+      ...ytArgs,
       ...ck,
       url,
     ]);
@@ -77,13 +81,15 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
     // Non-fatal — continue to download.
   }
 
-  // Download a <=720p mp4 (merge if needed).
+  // Download <=720p, merging separate video+audio to mp4. No hard ext filter on the
+  // streams (YouTube often only has webm/vp9 at a given res); we just merge to mp4.
   await run("yt-dlp", [
     "--no-playlist",
     "--no-warnings",
+    ...ytArgs,
     ...ck,
     "-f",
-    "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
+    "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
     "--merge-output-format",
     "mp4",
     "-o",
