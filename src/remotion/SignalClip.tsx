@@ -2,63 +2,18 @@ import React from "react";
 import {
   AbsoluteFill,
   Audio,
+  Freeze,
   interpolate,
   OffthreadVideo,
-  Sequence,
+  Series,
   useCurrentFrame,
-  useVideoConfig,
 } from "remotion";
 import type { RenderSpec, Word } from "../types";
-import { FPS, computeSegmentSeconds } from "../types";
+import { FPS, buildTimeline, deAI } from "../types";
 
 const s = (sec: number) => Math.round(sec * FPS);
-
-/** Cold-open / takeaway title card with the branded frame + logo bug. */
-const Card: React.FC<{
-  spec: RenderSpec;
-  eyebrow: string;
-  text: string;
-  signoff?: boolean;
-}> = ({ spec, eyebrow, text, signoff }) => {
-  const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 12], [0, 1], { extrapolateRight: "clamp" });
-  const { brand } = spec;
-  return (
-    <AbsoluteFill
-      style={{
-        backgroundColor: brand.bg,
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 120,
-        fontFamily: "'Space Grotesk', system-ui, sans-serif",
-      }}
-    >
-      <div style={{ opacity, textAlign: "center", maxWidth: 860 }}>
-        <div
-          style={{
-            color: brand.accent,
-            letterSpacing: 6,
-            fontSize: 30,
-            fontWeight: 700,
-            textTransform: "uppercase",
-            marginBottom: 40,
-          }}
-        >
-          {eyebrow}
-        </div>
-        <div style={{ color: brand.text, fontSize: 76, lineHeight: 1.15, fontWeight: 700 }}>
-          {text}
-        </div>
-        {signoff && (
-          <div style={{ color: brand.accent, fontSize: 44, marginTop: 56, fontWeight: 700 }}>
-            {spec.takeaway_text}
-          </div>
-        )}
-      </div>
-      <LogoBug spec={spec} />
-    </AbsoluteFill>
-  );
-};
+const FONT = "'Space Grotesk', system-ui, sans-serif";
+const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
 const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
   <div
@@ -71,39 +26,38 @@ const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
       fontSize: 30,
       fontWeight: 700,
       letterSpacing: 1,
-      fontFamily: "'Space Grotesk', system-ui, sans-serif",
+      fontFamily: FONT,
     }}
   >
     <span style={{ color: spec.brand.accent }}>▍</span> {spec.brand.channel_name}
   </div>
 );
 
-/** Word-by-word caption band: current word in accent, neighbours muted. */
+/** Word-by-word captions of the SOURCE, on a dark band for readability. */
 const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }> = ({
   words,
   clipStart,
   spec,
 }) => {
   const frame = useCurrentFrame();
-  const tAbs = clipStart + frame / FPS; // absolute time in source
+  const tAbs = clipStart + frame / FPS;
+  if (words.length === 0) return null;
   const idx = words.findIndex((w) => tAbs >= w.start && tAbs < w.end);
-  if (idx === -1 && words.length === 0) return null;
   const active = idx === -1 ? 0 : idx;
-  const window = words.slice(Math.max(0, active - 3), active + 4);
+  const win = words.slice(Math.max(0, active - 3), active + 4);
   return (
     <div
       style={{
         position: "absolute",
-        bottom: "12%",
+        bottom: "11%",
         left: 0,
         right: 0,
         display: "flex",
         justifyContent: "center",
         padding: "0 56px",
-        fontFamily: "'Space Grotesk', system-ui, sans-serif",
+        fontFamily: FONT,
       }}
     >
-      {/* Dark rounded band keeps captions readable over any background */}
       <div
         style={{
           display: "flex",
@@ -116,8 +70,9 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
           backgroundColor: "rgba(9, 11, 13, 0.72)",
         }}
       >
-        {window.map((w, i) => {
+        {win.map((w, i) => {
           const isActive = words.indexOf(w) === active;
+          const text = w.text.replace(/[—–―]/g, "");
           return (
             <span
               key={`${w.start}-${i}`}
@@ -131,7 +86,7 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
                 textShadow: "0 2px 10px rgba(0,0,0,0.9)",
               }}
             >
-              {w.text}
+              {text}
             </span>
           );
         })}
@@ -140,65 +95,157 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
   );
 };
 
-export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
-  const { fps } = useVideoConfig();
-  const { hookLen, clipLen, takeawayLen } = computeSegmentSeconds(spec);
-  const hookFrames = s(hookLen);
-  const clipFrames = s(clipLen);
-  const takeawayFrames = s(takeawayLen);
-
-  // Words that fall inside the clip window.
-  const clipWords = spec.captions.filter((w) => w.end > spec.t_in && w.start < spec.t_out);
-
+/** A clean stretch of the source clip (full frame, real audio). */
+const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: number }> = ({
+  spec,
+  startSec,
+  endSec,
+}) => {
+  const words = spec.captions.filter(
+    (w) => w.end > spec.t_in + startSec && w.start < spec.t_in + endSec
+  );
   return (
-    <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
-      {/* 1 — COLD OPEN (original) */}
-      <Sequence durationInFrames={hookFrames}>
-        <Card spec={spec} eyebrow={spec.brand.channel_name} text={spec.hook_text || spec.title} />
-        {spec.audio.hook_url ? <Audio src={spec.audio.hook_url} /> : null}
-      </Sequence>
-
-      {/* 2 — THE CLIP (evidence) — full frame on brand letterbox (no GPU-heavy blur) */}
-      <Sequence from={hookFrames} durationInFrames={clipFrames}>
-        <AbsoluteFill
-          style={{
-            background: `radial-gradient(ellipse at center, #17191c 0%, ${spec.brand.bg} 75%)`,
-          }}
-        >
-          {/* The full source frame, never cropped — single decode for performance */}
-          <OffthreadVideo
-            src={spec.source_url}
-            startFrom={s(spec.t_in)}
-            endAt={s(spec.t_out)}
-            volume={(f) => duckVolume(f, fps, spec)}
-            style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain" }}
-          />
-          <Captions words={clipWords} clipStart={spec.t_in} spec={spec} />
-          <LogoBug spec={spec} />
-          {/* Matt interjections over the clip */}
-          {spec.audio.interjections.map((it, i) => (
-            <Sequence key={i} from={s(it.at)} durationInFrames={s(it.duration_s)}>
-              <Audio src={it.url} />
-            </Sequence>
-          ))}
-        </AbsoluteFill>
-      </Sequence>
-
-      {/* 3 — TAKEAWAY (original) */}
-      <Sequence from={hookFrames + clipFrames} durationInFrames={takeawayFrames}>
-        <Card spec={spec} eyebrow="The read" text={spec.title} signoff />
-        {spec.audio.takeaway_url ? <Audio src={spec.audio.takeaway_url} /> : null}
-      </Sequence>
+    <AbsoluteFill style={{ background: GRADIENT(spec.brand.bg) }}>
+      <OffthreadVideo
+        src={spec.source_url}
+        startFrom={s(spec.t_in + startSec)}
+        endAt={s(spec.t_in + endSec)}
+        style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain" }}
+      />
+      <Captions words={words} clipStart={spec.t_in + startSec} spec={spec} />
+      <LogoBug spec={spec} />
     </AbsoluteFill>
   );
 };
 
-/** Duck the source audio right down while a Matt interjection is playing (full length). */
-function duckVolume(frameInClip: number, fps: number, spec: RenderSpec): number {
-  const tClip = frameInClip / fps;
-  for (const it of spec.audio.interjections) {
-    // A small lead-in/out so the duck feels intentional, not abrupt.
-    if (tClip >= it.at - 0.15 && tClip < it.at + it.duration_s + 0.15) return 0.08;
-  }
-  return 1;
-}
+/** The clip PAUSES on a frozen frame while Matt gives his take (source silent). */
+const MattInsert: React.FC<{ spec: RenderSpec; freezeSec: number; text: string }> = ({
+  spec,
+  freezeSec,
+  text,
+}) => {
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
+  const clean = deAI(text);
+  return (
+    <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
+      {/* Frozen source frame behind Matt */}
+      <Freeze frame={s(freezeSec)}>
+        <OffthreadVideo
+          src={spec.source_url}
+          muted
+          volume={0}
+          style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain" }}
+        />
+      </Freeze>
+      {/* Dim so it's clear we've cut to commentary */}
+      <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.62)" }} />
+      <LogoBug spec={spec} />
+      <AbsoluteFill
+        style={{ justifyContent: "center", alignItems: "center", padding: "0 90px", opacity }}
+      >
+        <div style={{ textAlign: "center", maxWidth: 940, fontFamily: FONT }}>
+          <div
+            style={{
+              color: spec.brand.accent,
+              letterSpacing: 6,
+              fontSize: 28,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              marginBottom: 26,
+            }}
+          >
+            ▍ Matt
+          </div>
+          {clean ? (
+            <div
+              style={{
+                color: spec.brand.text,
+                fontSize: 62,
+                fontWeight: 800,
+                lineHeight: 1.18,
+                WebkitTextStroke: "1px rgba(0,0,0,0.45)",
+                textShadow: "0 2px 12px rgba(0,0,0,0.8)",
+              }}
+            >
+              {clean}
+            </div>
+          ) : null}
+        </div>
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+
+/** Closing take + sign-off card. */
+const TakeawayCard: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [0, 12], [0, 1], { extrapolateRight: "clamp" });
+  return (
+    <AbsoluteFill
+      style={{
+        backgroundColor: spec.brand.bg,
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 110,
+        fontFamily: FONT,
+      }}
+    >
+      <div style={{ opacity, textAlign: "center", maxWidth: 900 }}>
+        <div
+          style={{
+            color: spec.brand.accent,
+            letterSpacing: 6,
+            fontSize: 30,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            marginBottom: 40,
+          }}
+        >
+          The read
+        </div>
+        <div style={{ color: spec.brand.text, fontSize: 74, lineHeight: 1.15, fontWeight: 700 }}>
+          {deAI(spec.title)}
+        </div>
+        <div style={{ color: spec.brand.accent, fontSize: 44, marginTop: 52, fontWeight: 700 }}>
+          {deAI(spec.takeaway_text)}
+        </div>
+      </div>
+      <LogoBug spec={spec} />
+    </AbsoluteFill>
+  );
+};
+
+export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
+  const { items } = buildTimeline(spec);
+  return (
+    <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
+      <Series>
+        {items.map((it, i) => {
+          const frames = Math.max(1, Math.round(it.durSec * FPS));
+          if (it.kind === "source") {
+            return (
+              <Series.Sequence key={i} durationInFrames={frames}>
+                <SourceSegment spec={spec} startSec={it.startSec ?? 0} endSec={it.endSec ?? 0} />
+              </Series.Sequence>
+            );
+          }
+          if (it.kind === "insert") {
+            return (
+              <Series.Sequence key={i} durationInFrames={frames}>
+                <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} />
+                {it.url ? <Audio src={it.url} /> : null}
+              </Series.Sequence>
+            );
+          }
+          return (
+            <Series.Sequence key={i} durationInFrames={frames}>
+              <TakeawayCard spec={spec} />
+              {spec.audio.takeaway_url ? <Audio src={spec.audio.takeaway_url} /> : null}
+            </Series.Sequence>
+          );
+        })}
+      </Series>
+    </AbsoluteFill>
+  );
+};

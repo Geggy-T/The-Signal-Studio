@@ -29,9 +29,10 @@ export const RenderSpecSchema = z.object({
     interjections: z
       .array(
         z.object({
-          at: z.number(), // seconds into the CLIP where the interjection starts
+          at: z.number(), // seconds into the CLIP where Matt cuts in
           url: z.string().url(),
-          duration_s: z.number().default(3), // ducking window; worker sets to the real audio length
+          duration_s: z.number().default(3), // worker sets to the real audio length
+          text: z.string().optional().default(""), // Matt's words, shown on the frozen frame
         })
       )
       .default([]),
@@ -91,8 +92,96 @@ export const SEGMENT_PAD = 0.6;
 export function computeSegmentSeconds(spec: RenderSpec) {
   const hookAudio = spec.audio.hook_duration_s ?? HOOK_SECONDS;
   const takeawayAudio = spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS;
+  // hookLen = the opening window where Matt's hook VO plays OVER the start of the clip
+  // (the clip is on-screen the whole time — no black cold-open card).
   const hookLen = Math.max(MIN_HOOK_SECONDS, hookAudio + SEGMENT_PAD);
   const takeawayLen = Math.max(MIN_TAKEAWAY_SECONDS, takeawayAudio + SEGMENT_PAD);
   const clipLen = Math.max(0.5, spec.t_out - spec.t_in);
-  return { hookLen, clipLen, takeawayLen, total: hookLen + clipLen + takeawayLen };
+  // Total = clip (which the hook overlays) + the closing takeaway card.
+  return { hookLen, clipLen, takeawayLen, total: clipLen + takeawayLen };
+}
+
+/** Strip em/en dashes (a common AI tell) from any on-screen text. */
+export function deAI(text: string): string {
+  return String(text ?? "")
+    .replace(/\s*[—–―]\s*/g, ", ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+export interface TimelineItem {
+  kind: "source" | "insert" | "takeaway";
+  durSec: number;
+  // source segments (clip-relative seconds):
+  startSec?: number;
+  endSec?: number;
+  // Matt inserts (freeze the source at this absolute-in-clip second):
+  freezeSec?: number;
+  url?: string | null;
+  text?: string;
+}
+
+/**
+ * Reaction timeline: the clip plays, PAUSES on a frozen frame while Matt gives his
+ * take (source silent), then resumes. Speaker and Matt never talk at once.
+ * Order: [speaker] → [Matt] → [speaker] → [Matt] → … → [takeaway card].
+ */
+export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const INSERT_PAD = 0.5;
+  const takeawayLen = Math.max(
+    MIN_TAKEAWAY_SECONDS,
+    (spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS) + SEGMENT_PAD
+  );
+
+  type R = { at: number; dur: number; url?: string | null; text: string };
+  const reactions: R[] = [];
+  // Matt's hook becomes the FIRST reaction — but only after the speaker has led in,
+  // so the speaker always makes their point first (never talked over at the open).
+  if (spec.audio.hook_url || spec.hook_text) {
+    reactions.push({
+      at: Math.min(3.5, C * 0.25),
+      dur: (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD,
+      url: spec.audio.hook_url,
+      text: spec.hook_text || spec.title,
+    });
+  }
+  for (const it of spec.audio.interjections) {
+    reactions.push({
+      at: it.at,
+      dur: (it.duration_s ?? 3) + INSERT_PAD,
+      url: it.url,
+      text: it.text ?? "",
+    });
+  }
+
+  // Keep the cut points ordered and spaced inside the clip.
+  reactions.sort((a, b) => a.at - b.at);
+  let last = 0.5;
+  const valid: R[] = [];
+  for (const r of reactions) {
+    let at = Math.min(Math.max(r.at, last + 1.0), C - 0.4);
+    if (!Number.isFinite(at) || at <= last) continue;
+    valid.push({ ...r, at });
+    last = at;
+  }
+
+  const items: TimelineItem[] = [];
+  let cursor = 0;
+  for (const r of valid) {
+    if (r.at > cursor + 0.05) {
+      items.push({ kind: "source", startSec: cursor, endSec: r.at, durSec: r.at - cursor });
+    }
+    items.push({ kind: "insert", freezeSec: r.at, durSec: r.dur, url: r.url, text: r.text });
+    cursor = r.at;
+  }
+  if (cursor < C - 0.05) {
+    items.push({ kind: "source", startSec: cursor, endSec: C, durSec: C - cursor });
+  }
+  items.push({ kind: "takeaway", durSec: takeawayLen });
+
+  const totalSec = items.reduce((a, i) => a + i.durSec, 0);
+  return { items, totalSec };
 }
