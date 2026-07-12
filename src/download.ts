@@ -74,6 +74,70 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
  * file's signed URL, or a direct media link) so transcription stays tiny even for
  * long sources. ffmpeg reads the https URL directly.
  */
+/** Run a command but resolve with whatever stdout we got, even on non-zero exit. */
+function runSoft(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.on("error", () => resolve(out));
+    p.on("close", () => resolve(out));
+  });
+}
+
+export interface DiscoveredItem {
+  url: string;
+  title: string;
+  uploader: string;
+  view_count: number | null;
+  like_count: number | null;
+  timestamp: number | null; // unix seconds
+  duration: number | null;
+  thumbnail: string | null;
+  source: string;
+}
+
+/**
+ * Discover recent videos + metadata from a list of TikTok creator/hashtag URLs via
+ * yt-dlp (no paid API). Resilient: a failing source is skipped, partial output kept.
+ */
+export async function discover(sources: string[], perSource = 8): Promise<DiscoveredItem[]> {
+  const items: DiscoveredItem[] = [];
+  for (const src of sources) {
+    const out = await runSoft("yt-dlp", [
+      "--no-warnings",
+      "--ignore-errors",
+      "--dump-json",
+      "--playlist-end",
+      String(perSource),
+      src,
+    ]);
+    for (const line of out.split("\n")) {
+      const t = line.trim();
+      if (!t || t[0] !== "{") continue;
+      try {
+        const j = JSON.parse(t) as Record<string, unknown>;
+        const url = String(j.webpage_url || j.url || j.original_url || "");
+        if (!url) continue;
+        items.push({
+          url,
+          title: String(j.title || j.description || "").slice(0, 300),
+          uploader: String(j.uploader || j.uploader_id || j.channel || ""),
+          view_count: typeof j.view_count === "number" ? j.view_count : null,
+          like_count: typeof j.like_count === "number" ? j.like_count : null,
+          timestamp: typeof j.timestamp === "number" ? j.timestamp : null,
+          duration: typeof j.duration === "number" ? j.duration : null,
+          thumbnail: typeof j.thumbnail === "string" ? j.thumbnail : null,
+          source: src,
+        });
+      } catch {
+        /* skip bad line */
+      }
+    }
+  }
+  return items;
+}
+
 export async function extractAudio(
   sourceUrl: string
 ): Promise<{ audioPath: string; workDir: string }> {

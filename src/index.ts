@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import express from "express";
 import { RenderSpecSchema } from "./types.js";
 import { renderClip } from "./render.js";
-import { downloadUrl, extractAudio } from "./download.js";
+import { downloadUrl, extractAudio, discover } from "./download.js";
 import { putToSignedUrl } from "./supabase.js";
 
 const app = express();
@@ -18,6 +18,29 @@ function authed(req: express.Request): boolean {
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "signal-render-worker" }));
+
+/**
+ * Trend discovery: given a list of TikTok creator/hashtag URLs, return recent videos
+ * with metadata (views, likes, date, thumbnail) via yt-dlp. Body: { sources[], per_source? }
+ */
+app.post("/discover", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const { sources, per_source } = req.body ?? {};
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return res.status(400).json({ error: "sources[] is required" });
+  }
+  try {
+    const items = await discover(
+      sources.map((s: unknown) => String(s)).slice(0, 25),
+      Math.min(Math.max(Number(per_source) || 8, 1), 20)
+    );
+    console.log(`[discover] ${items.length} items from ${sources.length} sources`);
+    res.json({ status: "done", items });
+  } catch (err: unknown) {
+    console.error("[discover] failed", err);
+    res.status(500).json({ status: "failed", error: String((err as Error)?.message || err) });
+  }
+});
 
 /**
  * Extract a small mono audio track from a media URL (an uploaded file's signed URL,
