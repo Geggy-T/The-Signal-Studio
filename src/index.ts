@@ -91,7 +91,10 @@ async function postCallback(url: string, body: unknown): Promise<void> {
   try {
     await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(WORKER_SECRET ? { authorization: `Bearer ${WORKER_SECRET}` } : {}),
+      },
       body: JSON.stringify(body),
     });
   } catch (err) {
