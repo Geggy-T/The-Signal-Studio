@@ -47,19 +47,29 @@ Result:
 
 ---
 
+## Uploads: signed URLs (no Supabase keys on the worker)
+
+The worker does **not** hold Supabase credentials. For each job, the Studio's `render`
+edge function (which has internal Supabase access via Lovable) creates short-lived
+**signed upload URLs** with `storage.createSignedUploadUrl(path)` and includes them in
+the render spec (`upload.mp4_put_url`, `upload.thumb_put_url`, `upload.mp4_path`,
+`upload.thumb_path`). The worker simply `PUT`s the finished MP4 + thumbnail to those URLs
+and returns the storage paths. The `service_role` key never leaves Lovable's backend.
+
+*(Optional fallback: if you ever do hold a service_role key, set `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY` and the worker will upload directly instead.)*
+
 ## Deploy to Railway (from GitHub)
 
 1. Push this folder to your GitHub repo.
 2. In Railway: **New Project → Deploy from GitHub repo** → pick the repo. Railway detects the `Dockerfile`.
-3. Add service **Variables** (from `.env.example`):
-   - `RENDER_WORKER_SECRET` — a long random string (must match the same secret in Supabase).
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY` — from Supabase → Project Settings → API (service_role, keep secret).
-   - `SUPABASE_BUCKET` — `renders` (create this Storage bucket in Supabase first).
+3. Add **one** service variable:
+   - `RENDER_WORKER_SECRET` — a long random string (must match the same secret in the Studio's Supabase secrets).
+   - *(That's it. No Supabase URL or keys needed — see "Uploads" above.)*
 4. Deploy. Railway gives you a public URL — that's your `RENDER_WORKER_URL`.
 5. In the **Studio (Supabase) secrets**, set `RENDER_WORKER_URL` to that URL and `RENDER_WORKER_SECRET` to the same string.
 
-First deploy builds Chrome Headless Shell into the image, so it's a few minutes; renders after that are fast.
+The Chrome Headless Shell downloads automatically on the **first render** (~30–60s once), then renders are fast. Give the Railway service **2 GB+ memory** for comfortable rendering.
 
 ---
 

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import type { RenderSpec } from "./types.js";
-import { uploadToStorage } from "./supabase.js";
+import { putToSignedUrl, uploadWithServiceRole } from "./supabase.js";
 
 // Bundle once, reuse across requests (cold start ~ a few seconds).
 let serveUrlPromise: Promise<string> | null = null;
@@ -69,8 +69,20 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   const mp4 = await fs.readFile(outFile);
   const thumb = await fs.readFile(thumbFile);
 
-  const output_path = await uploadToStorage(`clips/${id}.mp4`, mp4, "video/mp4");
-  const thumbnail_path = await uploadToStorage(`clips/${id}.jpeg`, thumb, "image/jpeg");
+  let output_path: string;
+  let thumbnail_path: string;
+
+  if (spec.upload) {
+    // Preferred: PUT to signed URLs from the edge function (no keys on the worker).
+    await putToSignedUrl(spec.upload.mp4_put_url, mp4, "video/mp4");
+    await putToSignedUrl(spec.upload.thumb_put_url, thumb, "image/jpeg");
+    output_path = spec.upload.mp4_path;
+    thumbnail_path = spec.upload.thumb_path;
+  } else {
+    // Fallback: direct upload with a service_role key (only if env is set).
+    output_path = await uploadWithServiceRole(`clips/${id}.mp4`, mp4, "video/mp4");
+    thumbnail_path = await uploadWithServiceRole(`clips/${id}.jpeg`, thumb, "image/jpeg");
+  }
 
   await fs.rm(workDir, { recursive: true, force: true });
 

@@ -11,7 +11,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "studio": "remotion studio src/remotion/index.ts"
+    "studio": "npx --yes @remotion/cli@4.0.488 studio src/remotion/index.ts"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.488",

@@ -50,6 +50,19 @@ export const RenderSpecSchema = z.object({
     })
     .default({}),
 
+  // PREFERRED upload path: the Studio's render edge function creates short-lived
+  // signed upload URLs (Supabase createSignedUploadUrl) and passes them here.
+  // The worker just PUTs the finished files — no Supabase keys needed on the worker.
+  upload: z
+    .object({
+      mp4_put_url: z.string().url(),
+      thumb_put_url: z.string().url(),
+      mp4_path: z.string(), // storage path to report back, e.g. "renders/clips/<id>.mp4"
+      thumb_path: z.string(),
+    })
+    .nullable()
+    .optional(),
+
   // Optional async callback; if present, worker returns 202 and POSTs result here.
   callback_url: z.string().url().nullable().optional(),
 });
