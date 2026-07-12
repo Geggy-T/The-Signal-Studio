@@ -150,16 +150,19 @@ export async function discover(
   const items: DiscoveredItem[] = [];
   const deadline = Date.now() + budgetMs;
   const ck = await cookieArgs();
+  console.log(`[discover] cookies=${ck.length > 0 ? "loaded" : "NONE"}`);
   for (const src of sources) {
     if (Date.now() > deadline) {
       console.warn(`[discover] time budget reached; stopping at ${items.length} items`);
       break;
     }
+    // Flat listing: one page fetch per channel (fast, far less likely to be blocked).
     const out = await runSoft(
       "yt-dlp",
       [
         "--no-warnings",
         "--ignore-errors",
+        "--flat-playlist",
         "--dump-json",
         "--playlist-end",
         String(perSource),
@@ -168,28 +171,45 @@ export async function discover(
       ],
       18000
     );
+    let perSourceCount = 0;
     for (const line of out.split("\n")) {
       const t = line.trim();
       if (!t || t[0] !== "{") continue;
       try {
         const j = JSON.parse(t) as Record<string, unknown>;
-        const url = String(j.webpage_url || j.url || j.original_url || "");
+        const id = String(j.id || "");
+        let url = String(j.webpage_url || j.original_url || "");
+        if (!url) {
+          const u = String(j.url || "");
+          if (u.startsWith("http")) url = u;
+          else if (id) url = `https://www.youtube.com/watch?v=${id}`;
+        }
         if (!url) continue;
+        // YouTube often gives upload_date (YYYYMMDD) but no unix timestamp — derive it.
+        let ts = typeof j.timestamp === "number" ? j.timestamp : null;
+        if (ts == null && typeof j.upload_date === "string" && /^\d{8}$/.test(j.upload_date)) {
+          const y = Number(j.upload_date.slice(0, 4));
+          const m = Number(j.upload_date.slice(4, 6)) - 1;
+          const d = Number(j.upload_date.slice(6, 8));
+          ts = Math.floor(Date.UTC(y, m, d) / 1000);
+        }
         items.push({
           url,
           title: String(j.title || j.description || "").slice(0, 300),
           uploader: String(j.uploader || j.uploader_id || j.channel || ""),
           view_count: typeof j.view_count === "number" ? j.view_count : null,
           like_count: typeof j.like_count === "number" ? j.like_count : null,
-          timestamp: typeof j.timestamp === "number" ? j.timestamp : null,
+          timestamp: ts,
           duration: typeof j.duration === "number" ? j.duration : null,
           thumbnail: typeof j.thumbnail === "string" ? j.thumbnail : null,
           source: src,
         });
+        perSourceCount++;
       } catch {
         /* skip bad line */
       }
     }
+    console.log(`[discover] ${src} -> ${perSourceCount} items`);
   }
   return items;
 }
