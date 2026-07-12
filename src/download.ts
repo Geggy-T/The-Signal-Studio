@@ -18,6 +18,26 @@ function run(cmd: string, args: string[]): Promise<string> {
   });
 }
 
+/**
+ * If YOUTUBE_COOKIES is set (Netscape cookies.txt contents), write it to a temp file
+ * once and return the yt-dlp --cookies args. Lets us download/list from YouTube etc.
+ */
+let cookiePath: string | null | undefined;
+async function cookieArgs(): Promise<string[]> {
+  const raw = process.env.YOUTUBE_COOKIES;
+  if (!raw || !raw.trim()) return [];
+  if (cookiePath === undefined) {
+    try {
+      const p = path.join(os.tmpdir(), "yt-cookies.txt");
+      await fs.writeFile(p, raw, "utf8");
+      cookiePath = p;
+    } catch {
+      cookiePath = null;
+    }
+  }
+  return cookiePath ? ["--cookies", cookiePath] : [];
+}
+
 export interface DownloadResult {
   videoPath: string;
   audioPath: string;
@@ -37,12 +57,19 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "ingest-"));
   const videoPath = path.join(workDir, "video.mp4");
   const audioPath = path.join(workDir, "audio.mp3");
+  const ck = await cookieArgs();
 
   // Fetch metadata (title, duration) without downloading.
   let title = "";
   let durationS: number | null = null;
   try {
-    const meta = await run("yt-dlp", ["--no-playlist", "--dump-single-json", "--no-warnings", url]);
+    const meta = await run("yt-dlp", [
+      "--no-playlist",
+      "--dump-single-json",
+      "--no-warnings",
+      ...ck,
+      url,
+    ]);
     const j = JSON.parse(meta) as { title?: string; duration?: number };
     title = j.title ?? "";
     durationS = typeof j.duration === "number" ? j.duration : null;
@@ -54,6 +81,7 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
   await run("yt-dlp", [
     "--no-playlist",
     "--no-warnings",
+    ...ck,
     "-f",
     "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
     "--merge-output-format",
@@ -121,6 +149,7 @@ export async function discover(
 ): Promise<DiscoveredItem[]> {
   const items: DiscoveredItem[] = [];
   const deadline = Date.now() + budgetMs;
+  const ck = await cookieArgs();
   for (const src of sources) {
     if (Date.now() > deadline) {
       console.warn(`[discover] time budget reached; stopping at ${items.length} items`);
@@ -134,6 +163,7 @@ export async function discover(
         "--dump-json",
         "--playlist-end",
         String(perSource),
+        ...ck,
         src,
       ],
       18000
