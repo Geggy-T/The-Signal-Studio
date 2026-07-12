@@ -163,6 +163,9 @@ export async function discover(
         "--no-warnings",
         "--ignore-errors",
         "--flat-playlist",
+        // Ask YouTube's tab extractor for approximate upload dates (stays flat/fast).
+        "--extractor-args",
+        "youtubetab:approximate_date",
         "--dump-json",
         "--playlist-end",
         String(perSource),
