@@ -1,6 +1,9 @@
+import fs from "node:fs/promises";
 import express from "express";
 import { RenderSpecSchema } from "./types.js";
 import { renderClip } from "./render.js";
+import { downloadUrl } from "./download.js";
+import { putToSignedUrl } from "./supabase.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -15,6 +18,40 @@ function authed(req: express.Request): boolean {
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "signal-render-worker" }));
+
+/**
+ * Download a video URL (YouTube etc.) via yt-dlp and PUT the resulting video + audio
+ * to the provided Supabase signed upload URLs. Only for rights-clean sources.
+ * Body: { url, video_put_url, audio_put_url }
+ */
+app.post("/ingest-url", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const { url, video_put_url, audio_put_url } = req.body ?? {};
+  if (!url || !video_put_url || !audio_put_url) {
+    return res.status(400).json({ error: "url, video_put_url and audio_put_url are required" });
+  }
+  let workDir: string | null = null;
+  try {
+    const dl = await downloadUrl(String(url));
+    workDir = dl.workDir;
+    const videoBuf = await fs.readFile(dl.videoPath);
+    const audioBuf = await fs.readFile(dl.audioPath);
+    await putToSignedUrl(String(video_put_url), videoBuf, "video/mp4");
+    await putToSignedUrl(String(audio_put_url), audioBuf, "audio/mpeg");
+    res.json({
+      status: "done",
+      title: dl.title,
+      duration_s: dl.durationS,
+      video_bytes: videoBuf.byteLength,
+      audio_bytes: audioBuf.byteLength,
+    });
+  } catch (err: unknown) {
+    console.error("[ingest-url] failed", err);
+    res.status(500).json({ status: "failed", error: String((err as Error)?.message || err) });
+  } finally {
+    if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
 
 app.post("/render", async (req, res) => {
   if (!authed(req)) return res.status(401).json({ error: "unauthorized" });

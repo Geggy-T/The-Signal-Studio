@@ -94,34 +94,48 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
     <div
       style={{
         position: "absolute",
-        bottom: 300,
+        bottom: "12%",
         left: 0,
         right: 0,
         display: "flex",
-        flexWrap: "wrap",
         justifyContent: "center",
-        gap: "0 16px",
-        padding: "0 80px",
+        padding: "0 56px",
         fontFamily: "'Space Grotesk', system-ui, sans-serif",
       }}
     >
-      {window.map((w, i) => {
-        const isActive = words.indexOf(w) === active;
-        return (
-          <span
-            key={`${w.start}-${i}`}
-            style={{
-              fontSize: 62,
-              fontWeight: 800,
-              color: isActive ? spec.brand.accent : spec.brand.text,
-              opacity: isActive ? 1 : 0.7,
-              textShadow: "0 4px 24px rgba(0,0,0,0.85)",
-            }}
-          >
-            {w.text}
-          </span>
-        );
-      })}
+      {/* Dark rounded band keeps captions readable over any background */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          gap: "4px 16px",
+          maxWidth: "94%",
+          padding: "18px 28px",
+          borderRadius: 22,
+          backgroundColor: "rgba(9, 11, 13, 0.72)",
+        }}
+      >
+        {window.map((w, i) => {
+          const isActive = words.indexOf(w) === active;
+          return (
+            <span
+              key={`${w.start}-${i}`}
+              style={{
+                fontSize: 58,
+                fontWeight: 800,
+                lineHeight: 1.1,
+                color: isActive ? spec.brand.accent : spec.brand.text,
+                opacity: isActive ? 1 : 0.85,
+                WebkitTextStroke: "1px rgba(0,0,0,0.55)",
+                textShadow: "0 2px 10px rgba(0,0,0,0.9)",
+              }}
+            >
+              {w.text}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -146,18 +160,34 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
 
       {/* 2 — THE CLIP (evidence) */}
       <Sequence from={hookFrames} durationInFrames={clipFrames}>
-        <AbsoluteFill>
-          {/* source, cover-cropped to vertical */}
+        <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
+          {/* Blurred fill so widescreen sources don't leave empty bars */}
+          <OffthreadVideo
+            src={spec.source_url}
+            startFrom={s(spec.t_in)}
+            endAt={s(spec.t_out)}
+            muted
+            volume={0}
+            style={{
+              position: "absolute",
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "blur(32px) brightness(0.4)",
+              transform: "scale(1.15)",
+            }}
+          />
+          {/* The full source frame, never cropped */}
           <OffthreadVideo
             src={spec.source_url}
             startFrom={s(spec.t_in)}
             endAt={s(spec.t_out)}
             volume={(f) => duckVolume(f, fps, spec)}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain" }}
           />
           <Captions words={clipWords} clipStart={spec.t_in} spec={spec} />
           <LogoBug spec={spec} />
-          {/* Josh interjections over the clip */}
+          {/* Matt interjections over the clip */}
           {spec.audio.interjections.map((it, i) => (
             <Sequence key={i} from={s(it.at)} durationInFrames={s(it.duration_s)}>
               <Audio src={it.url} />

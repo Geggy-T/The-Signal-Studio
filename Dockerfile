@@ -1,11 +1,13 @@
 # The Signal — render worker. Remotion needs Chrome Headless Shell + system libs.
 FROM node:20-bookworm-slim
 
-# Dependencies required by Chrome Headless Shell (Remotion) + ffmpeg is bundled by Remotion.
+# Dependencies for Chrome Headless Shell (Remotion), plus ffmpeg + yt-dlp for URL ingest.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libasound2 libxrandr2 \
     libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 \
     libcups2 libxshmfence1 libglu1-mesa ca-certificates fonts-liberation \
+    ffmpeg python3 python3-pip \
+  && pip3 install --no-cache-dir --break-system-packages yt-dlp \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
