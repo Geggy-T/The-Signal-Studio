@@ -74,14 +74,27 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
  * file's signed URL, or a direct media link) so transcription stays tiny even for
  * long sources. ffmpeg reads the https URL directly.
  */
-/** Run a command but resolve with whatever stdout we got, even on non-zero exit. */
-function runSoft(cmd: string, args: string[]): Promise<string> {
+/** Run a command, resolve with whatever stdout we got, killing it after timeoutMs. */
+function runSoft(cmd: string, args: string[], timeoutMs = 20000): Promise<string> {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
+    const timer = setTimeout(() => {
+      try {
+        p.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }, timeoutMs);
     p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("error", () => resolve(out));
-    p.on("close", () => resolve(out));
+    p.on("error", () => {
+      clearTimeout(timer);
+      resolve(out);
+    });
+    p.on("close", () => {
+      clearTimeout(timer);
+      resolve(out);
+    });
   });
 }
 
@@ -101,17 +114,30 @@ export interface DiscoveredItem {
  * Discover recent videos + metadata from a list of TikTok creator/hashtag URLs via
  * yt-dlp (no paid API). Resilient: a failing source is skipped, partial output kept.
  */
-export async function discover(sources: string[], perSource = 8): Promise<DiscoveredItem[]> {
+export async function discover(
+  sources: string[],
+  perSource = 6,
+  budgetMs = 65000
+): Promise<DiscoveredItem[]> {
   const items: DiscoveredItem[] = [];
+  const deadline = Date.now() + budgetMs;
   for (const src of sources) {
-    const out = await runSoft("yt-dlp", [
-      "--no-warnings",
-      "--ignore-errors",
-      "--dump-json",
-      "--playlist-end",
-      String(perSource),
-      src,
-    ]);
+    if (Date.now() > deadline) {
+      console.warn(`[discover] time budget reached; stopping at ${items.length} items`);
+      break;
+    }
+    const out = await runSoft(
+      "yt-dlp",
+      [
+        "--no-warnings",
+        "--ignore-errors",
+        "--dump-json",
+        "--playlist-end",
+        String(perSource),
+        src,
+      ],
+      18000
+    );
     for (const line of out.split("\n")) {
       const t = line.trim();
       if (!t || t[0] !== "{") continue;
