@@ -142,8 +142,9 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   // Software rendering (Railway has no GPU) + generous per-frame timeout.
   const chromiumOptions = { gl: "swiftshader" as const };
   const FRAME_TIMEOUT = 120_000;
-  // Cap concurrency so a small container doesn't thrash / OOM. Override via env.
-  const concurrency = Number(process.env.RENDER_CONCURRENCY || 2);
+  // Cap concurrency so a small container doesn't thrash / OOM. Default 1 (safest on
+  // small Railway containers); raise via RENDER_CONCURRENCY if you give it more RAM.
+  const concurrency = Number(process.env.RENDER_CONCURRENCY || 1);
 
   const composition = await selectComposition({
     serveUrl,
