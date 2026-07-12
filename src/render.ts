@@ -145,6 +145,9 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   // Cap concurrency so a small container doesn't thrash / OOM. Default 1 (safest on
   // small Railway containers); raise via RENDER_CONCURRENCY if you give it more RAM.
   const concurrency = Number(process.env.RENDER_CONCURRENCY || 1);
+  // Render at 2/3 scale so 1080x1920 becomes 720x1280 — far less encoder memory,
+  // layout/fonts stay proportional automatically. Set RENDER_SCALE=1 once you add RAM.
+  const scale = Number(process.env.RENDER_SCALE || 2 / 3);
 
   const composition = await selectComposition({
     serveUrl,
@@ -159,7 +162,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   const thumbFile = path.join(workDir, "thumb.jpeg");
 
   console.log(
-    `[render] composition ${composition.durationInFrames} frames @ ${composition.fps}fps, concurrency=${concurrency}`
+    `[render] composition ${composition.durationInFrames} frames @ ${composition.fps}fps, concurrency=${concurrency}, scale=${scale.toFixed(3)} (${Math.round(composition.width * scale)}x${Math.round(composition.height * scale)})`
   );
   let lastPct = -1;
   await renderMedia({
@@ -170,6 +173,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     inputProps,
     crf: 23,
     concurrency,
+    scale,
     chromiumOptions,
     timeoutInMilliseconds: FRAME_TIMEOUT,
     onProgress: ({ renderedFrames }) => {
@@ -188,6 +192,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     frame: Math.floor(composition.durationInFrames * 0.5),
     inputProps,
     imageFormat: "jpeg",
+    scale,
     chromiumOptions,
     timeoutInMilliseconds: FRAME_TIMEOUT,
   });
