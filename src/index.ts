@@ -20,6 +20,39 @@ function authed(req: express.Request): boolean {
 app.get("/health", (_req, res) => res.json({ ok: true, service: "signal-render-worker" }));
 
 /**
+ * Local-download queue. The Studio enqueues web-video (YouTube etc.) downloads here;
+ * a local agent running on the user's own machine polls /next-download, downloads with
+ * their browser + home IP (sidesteps YouTube's server-side blocks), and PUTs the files
+ * to the signed URLs. In-memory: fine for a single-user tool.
+ */
+interface DownloadJob {
+  source_id: string;
+  url: string;
+  video_put_url: string;
+  audio_put_url: string;
+  queued_at: number;
+}
+const downloadQueue: DownloadJob[] = [];
+
+app.post("/queue-download", (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const { source_id, url, video_put_url, audio_put_url } = req.body ?? {};
+  if (!source_id || !url || !video_put_url || !audio_put_url) {
+    return res.status(400).json({ error: "source_id, url, video_put_url, audio_put_url required" });
+  }
+  downloadQueue.push({ source_id, url, video_put_url, audio_put_url, queued_at: Date.now() });
+  console.log(`[queue] +1 (${downloadQueue.length} pending): ${url}`);
+  res.json({ ok: true, pending: downloadQueue.length });
+});
+
+app.get("/next-download", (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const job = downloadQueue.shift() ?? null;
+  if (job) console.log(`[queue] -> local agent: ${job.url}`);
+  res.json({ job });
+});
+
+/**
  * Trend discovery: given a list of TikTok creator/hashtag URLs, return recent videos
  * with metadata (views, likes, date, thumbnail) via yt-dlp. Body: { sources[], per_source? }
  */
