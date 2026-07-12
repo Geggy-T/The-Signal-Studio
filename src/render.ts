@@ -1,12 +1,79 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { parseBuffer } from "music-metadata";
 import type { RenderSpec } from "./types.js";
 import { putToSignedUrl, uploadWithServiceRole } from "./supabase.js";
+import { SERVE_DIR } from "./serve.js";
+
+/** Run ffmpeg, rejecting with the tail of stderr on failure. */
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    p.stderr.on("data", (d) => (err += d.toString()));
+    p.on("error", reject);
+    p.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`))
+    );
+  });
+}
+
+/**
+ * The big win for render speed: the source video lives in Supabase, so rendering
+ * straight from its signed URL means OffthreadVideo does a *remote range-request seek
+ * for every single frame* — deep into a long file, that stalls and trips the timeout.
+ *
+ * Instead we cut just the [t_in, t_out] section once (ffmpeg fast-seeks to a keyframe
+ * ~2s early, then accurate-seeks in), write it to a local dir the worker serves over
+ * localhost, and rebase the spec to be 0-based. OffthreadVideo then reads a tiny local
+ * file — fast seeks, no per-frame network. Returns the temp file path for cleanup.
+ */
+async function precutSource(spec: RenderSpec): Promise<string | null> {
+  if (!/^https?:\/\//i.test(spec.source_url)) return null;
+  const base = Math.max(0, spec.t_in);
+  const clipLen = Math.max(0.5, spec.t_out - spec.t_in);
+  const pre = Math.min(2, base);
+  const name = `${randomUUID()}.mp4`;
+  const cutPath = path.join(SERVE_DIR, name);
+  const port = Number(process.env.PORT || 8080);
+  console.log(
+    `[render] pre-cutting ${base.toFixed(1)}s..${(base + clipLen).toFixed(1)}s from remote source`
+  );
+  await runFfmpeg([
+    "-y",
+    "-ss",
+    String(base - pre),
+    "-i",
+    spec.source_url,
+    "-ss",
+    String(pre),
+    "-t",
+    String(clipLen),
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "23",
+    "-c:a",
+    "aac",
+    "-movflags",
+    "+faststart",
+    cutPath,
+  ]);
+  // Rebase: the cut file is now a 0-based source. Shift caption word times too.
+  spec.captions = spec.captions.map((w) => ({ ...w, start: w.start - base, end: w.end - base }));
+  spec.t_out = clipLen;
+  spec.t_in = 0;
+  spec.source_url = `http://127.0.0.1:${port}/local/${name}`;
+  console.log(`[render] pre-cut done -> ${spec.source_url}`);
+  return cutPath;
+}
 
 /** Fetch an audio file and return its duration in seconds (undefined on failure). */
 async function audioDuration(url?: string | null): Promise<number | undefined> {
@@ -62,6 +129,14 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   const serveUrl = await getServeUrl();
   // Measure real audio lengths so the hook/takeaway cards and ducking fit exactly.
   await measureAudioDurations(spec);
+  // Pre-cut the source section locally so rendering doesn't seek a huge remote file.
+  let cutPath: string | null = null;
+  try {
+    cutPath = await precutSource(spec);
+  } catch (e) {
+    console.warn("[render] pre-cut failed, using remote source:", (e as Error).message);
+    cutPath = null;
+  }
   const inputProps = { spec };
 
   // Software rendering (Railway has no GPU) + generous per-frame timeout.
@@ -136,6 +211,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   }
 
   await fs.rm(workDir, { recursive: true, force: true });
+  if (cutPath) await fs.rm(cutPath, { force: true }).catch(() => {});
 
   return {
     clip_candidate_id: id,

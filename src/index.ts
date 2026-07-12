@@ -4,9 +4,13 @@ import { RenderSpecSchema } from "./types.js";
 import { renderClip } from "./render.js";
 import { downloadUrl, extractAudio, discover } from "./download.js";
 import { putToSignedUrl } from "./supabase.js";
+import { SERVE_DIR } from "./serve.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
+
+// Serve pre-cut clip sections over localhost so the renderer reads them fast.
+app.use("/local", express.static(SERVE_DIR));
 
 const PORT = Number(process.env.PORT || 8080);
 const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
