@@ -60,7 +60,7 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
   const ck = await cookieArgs();
 
   // Player clients that reliably expose downloadable formats on current YouTube.
-  const ytArgs = ["--extractor-args", "youtube:player_client=default,web_safari,ios"];
+  const ytArgs = ["--extractor-args", "youtube:player_client=tv,web_safari,ios,android,default"];
 
   // Fetch metadata (title, duration) without downloading.
   let title = "";

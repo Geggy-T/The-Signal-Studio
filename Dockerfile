@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 \
     libcups2 libxshmfence1 libglu1-mesa ca-certificates fonts-liberation \
     ffmpeg python3 python3-pip \
-  && pip3 install --no-cache-dir --break-system-packages yt-dlp \
+  && pip3 install --no-cache-dir --break-system-packages -U --pre "yt-dlp[default]" \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

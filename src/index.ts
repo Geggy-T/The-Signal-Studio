@@ -164,4 +164,12 @@ async function postCallback(url: string, body: unknown): Promise<void> {
   }
 }
 
-app.listen(PORT, () => console.log(`signal-render-worker listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`signal-render-worker listening on :${PORT}`);
+  // Log the yt-dlp version at boot so we can confirm the nightly build is live.
+  import("node:child_process").then(({ exec }) =>
+    exec("yt-dlp --version", (_e, stdout) =>
+      console.log(`[yt-dlp] version ${(stdout || "unknown").trim()}`)
+    )
+  );
+});
