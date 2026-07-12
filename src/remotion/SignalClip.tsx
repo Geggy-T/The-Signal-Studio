@@ -9,7 +9,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import type { RenderSpec, Word } from "../types";
-import { FPS, HOOK_SECONDS, TAKEAWAY_SECONDS } from "../types";
+import { FPS, computeSegmentSeconds } from "../types";
 
 const s = (sec: number) => Math.round(sec * FPS);
 
@@ -128,10 +128,10 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
 
 export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
   const { fps } = useVideoConfig();
-  const clipLen = Math.max(0.5, spec.t_out - spec.t_in);
-  const hookFrames = s(HOOK_SECONDS);
+  const { hookLen, clipLen, takeawayLen } = computeSegmentSeconds(spec);
+  const hookFrames = s(hookLen);
   const clipFrames = s(clipLen);
-  const takeawayFrames = s(TAKEAWAY_SECONDS);
+  const takeawayFrames = s(takeawayLen);
 
   // Words that fall inside the clip window.
   const clipWords = spec.captions.filter((w) => w.end > spec.t_in && w.start < spec.t_out);
@@ -175,11 +175,12 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
   );
 };
 
-/** Duck the source audio to ~15% while a Josh interjection is playing. */
+/** Duck the source audio right down while a Matt interjection is playing (full length). */
 function duckVolume(frameInClip: number, fps: number, spec: RenderSpec): number {
   const tClip = frameInClip / fps;
   for (const it of spec.audio.interjections) {
-    if (tClip >= it.at && tClip < it.at + it.duration_s) return 0.15;
+    // A small lead-in/out so the duck feels intentional, not abrupt.
+    if (tClip >= it.at - 0.15 && tClip < it.at + it.duration_s + 0.15) return 0.08;
   }
   return 1;
 }

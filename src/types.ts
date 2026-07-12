@@ -19,16 +19,19 @@ export const RenderSpecSchema = z.object({
   // Word-level transcript for the WHOLE source (we slice to the clip window here).
   captions: z.array(WordSchema).default([]),
 
-  // Josh (ElevenLabs) audio, as fetchable URLs.
+  // Matt (ElevenLabs) audio, as fetchable URLs.
   audio: z.object({
     hook_url: z.string().url().nullable().optional(),
     takeaway_url: z.string().url().nullable().optional(),
+    // Measured by the worker before rendering (seconds). Optional on input.
+    hook_duration_s: z.number().nullable().optional(),
+    takeaway_duration_s: z.number().nullable().optional(),
     interjections: z
       .array(
         z.object({
           at: z.number(), // seconds into the CLIP where the interjection starts
           url: z.string().url(),
-          duration_s: z.number().default(3), // how long to duck the source
+          duration_s: z.number().default(3), // ducking window; worker sets to the real audio length
         })
       )
       .default([]),
@@ -73,5 +76,23 @@ export type Word = z.infer<typeof WordSchema>;
 export const FPS = 30;
 export const WIDTH = 1080;
 export const HEIGHT = 1920;
+// Fallbacks used only when the audio duration couldn't be measured.
 export const HOOK_SECONDS = 4;
 export const TAKEAWAY_SECONDS = 5;
+// Minimum card lengths + a little breathing room after Matt stops speaking.
+export const MIN_HOOK_SECONDS = 2.5;
+export const MIN_TAKEAWAY_SECONDS = 3;
+export const SEGMENT_PAD = 0.6;
+
+/**
+ * Segment lengths, driven by the MEASURED audio durations so nothing gets cut off.
+ * Used by both the composition (SignalClip) and calculateMetadata (Root) so they agree.
+ */
+export function computeSegmentSeconds(spec: RenderSpec) {
+  const hookAudio = spec.audio.hook_duration_s ?? HOOK_SECONDS;
+  const takeawayAudio = spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS;
+  const hookLen = Math.max(MIN_HOOK_SECONDS, hookAudio + SEGMENT_PAD);
+  const takeawayLen = Math.max(MIN_TAKEAWAY_SECONDS, takeawayAudio + SEGMENT_PAD);
+  const clipLen = Math.max(0.5, spec.t_out - spec.t_in);
+  return { hookLen, clipLen, takeawayLen, total: hookLen + clipLen + takeawayLen };
+}

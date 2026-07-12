@@ -2,6 +2,7 @@ import React from "react";
 import { Composition } from "remotion";
 import { SignalClip } from "./SignalClip";
 import {
+  computeSegmentSeconds,
   FPS,
   HEIGHT,
   HOOK_SECONDS,
@@ -38,8 +39,7 @@ export const RemotionRoot: React.FC = () => {
       // Duration is computed from the actual clip length at render time.
       calculateMetadata={({ props }) => {
         const spec = (props as { spec: RenderSpec }).spec;
-        const clipLen = Math.max(0.5, spec.t_out - spec.t_in);
-        const total = HOOK_SECONDS + clipLen + TAKEAWAY_SECONDS;
+        const { total } = computeSegmentSeconds(spec);
         return { durationInFrames: Math.ceil(total * FPS), fps: FPS, width: WIDTH, height: HEIGHT };
       }}
     />

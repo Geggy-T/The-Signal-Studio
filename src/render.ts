@@ -4,8 +4,35 @@ import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
+import { parseBuffer } from "music-metadata";
 import type { RenderSpec } from "./types.js";
 import { putToSignedUrl, uploadWithServiceRole } from "./supabase.js";
+
+/** Fetch an audio file and return its duration in seconds (undefined on failure). */
+async function audioDuration(url?: string | null): Promise<number | undefined> {
+  if (!url) return undefined;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return undefined;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const meta = await parseBuffer(buf, "audio/mpeg");
+    return meta.format.duration ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Measure the real length of every Matt audio clip so nothing is cut off or over-talked. */
+async function measureAudioDurations(spec: RenderSpec): Promise<void> {
+  const hook = await audioDuration(spec.audio.hook_url);
+  if (hook) spec.audio.hook_duration_s = hook;
+  const takeaway = await audioDuration(spec.audio.takeaway_url);
+  if (takeaway) spec.audio.takeaway_duration_s = takeaway;
+  for (const it of spec.audio.interjections) {
+    const d = await audioDuration(it.url);
+    if (d && d > 0) it.duration_s = d;
+  }
+}
 
 // Bundle once, reuse across requests (cold start ~ a few seconds).
 let serveUrlPromise: Promise<string> | null = null;
@@ -33,6 +60,8 @@ export interface RenderResult {
 
 export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   const serveUrl = await getServeUrl();
+  // Measure real audio lengths so the hook/takeaway cards and ducking fit exactly.
+  await measureAudioDurations(spec);
   const inputProps = { spec };
 
   const composition = await selectComposition({
