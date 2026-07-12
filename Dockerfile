@@ -16,8 +16,10 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Download the Chrome Headless Shell at build time so first render is fast.
-RUN npx remotion browser ensure
+# NOTE: Chrome Headless Shell is fetched automatically at runtime the first time a
+# render runs (the worker calls ensureBrowser() in getServeUrl before bundling).
+# We intentionally do NOT prefetch it at build time — the `remotion` core package
+# has no CLI binary, so `npx remotion ...` would fail the build.
 
 ENV NODE_ENV=production
 EXPOSE 8080
