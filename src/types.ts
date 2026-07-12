@@ -139,14 +139,29 @@ function snapToPause(spec: RenderSpec, pClip: number): number {
   const abs = spec.t_in + pClip;
   const i = words.findIndex((w) => w.end >= abs);
   if (i === -1) return pClip;
-  const windowEnd = abs + 4.5; // look ahead up to ~4.5s for a sentence/clause break
+  const windowEnd = abs + 6; // look ahead up to ~6s for a real break
+  const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
+  const clamp = (x: number) => Math.min(C - 0.3, Math.max(0.3, x));
+
+  // 1) Best: cut right after a completed sentence.
+  for (let k = i; k < words.length; k++) {
+    if (words[k].end > windowEnd) break;
+    if (endsSentence(words[k].text)) return clamp(words[k].end - spec.t_in + 0.15);
+  }
+  // 2) Otherwise the longest pause in the window (a natural clause break).
+  let bestIdx = -1;
+  let bestGap = 0;
   for (let k = i; k < words.length - 1; k++) {
     if (words[k].end > windowEnd) break;
     const gap = words[k + 1].start - words[k].end;
-    if (gap > 0.3) return Math.min(C - 0.3, words[k].end - spec.t_in + 0.12);
+    if (gap > bestGap) {
+      bestGap = gap;
+      bestIdx = k;
+    }
   }
-  // Fallback: at least land on the end of the current word, not mid-word.
-  return Math.min(C - 0.3, words[i].end - spec.t_in + 0.08);
+  if (bestIdx !== -1 && bestGap >= 0.22) return clamp(words[bestIdx].end - spec.t_in + 0.12);
+  // 3) Fallback: end of the current word (never mid-word).
+  return clamp(words[i].end - spec.t_in + 0.08);
 }
 
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
@@ -157,39 +172,41 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     (spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS) + SEGMENT_PAD
   );
 
-  type R = { at: number; dur: number; url?: string | null; text: string };
-  const reactions: R[] = [];
-  // Matt's hook becomes the FIRST reaction — but only after the speaker has led in,
-  // so the speaker always makes their point first (never talked over at the open).
+  const items: TimelineItem[] = [];
+
+  // 1) OPENING HOOK — Matt lands a killer hook first, over a freeze of the opening
+  //    frame (a real video frame, not black), BEFORE the speaker is heard.
   if (spec.audio.hook_url || spec.hook_text) {
-    reactions.push({
-      at: snapToPause(spec, Math.min(3.5, C * 0.25)),
-      dur: (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD,
-      url: spec.audio.hook_url,
+    const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
+    items.push({
+      kind: "insert",
+      freezeSec: 0,
+      durSec: hookDur,
+      url: spec.audio.hook_url ?? null,
       text: spec.hook_text || spec.title,
     });
   }
-  for (const it of spec.audio.interjections) {
-    reactions.push({
-      at: snapToPause(spec, it.at),
-      dur: (it.duration_s ?? 3) + INSERT_PAD,
-      url: it.url,
-      text: it.text ?? "",
-    });
-  }
 
-  // Keep the cut points ordered and spaced inside the clip.
+  // 2) REACTIONS — interjections only, each snapped to the end of a sentence so Matt
+  //    reacts AFTER the speaker finishes a point (never mid-thought).
+  type R = { at: number; dur: number; url?: string | null; text: string };
+  const reactions: R[] = spec.audio.interjections.map((it) => ({
+    at: snapToPause(spec, it.at),
+    dur: (it.duration_s ?? 3) + INSERT_PAD,
+    url: it.url,
+    text: it.text ?? "",
+  }));
   reactions.sort((a, b) => a.at - b.at);
-  let last = 0.5;
+  let last = 1.0;
   const valid: R[] = [];
   for (const r of reactions) {
-    let at = Math.min(Math.max(r.at, last + 1.0), C - 0.4);
+    const at = Math.min(Math.max(r.at, last + 1.0), C - 0.4);
     if (!Number.isFinite(at) || at <= last) continue;
     valid.push({ ...r, at });
     last = at;
   }
 
-  const items: TimelineItem[] = [];
+  // 3) Interleave clean source segments with the reaction inserts, then the takeaway.
   let cursor = 0;
   for (const r of valid) {
     if (r.at > cursor + 0.05) {
