@@ -82,6 +82,10 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   const outFile = path.join(workDir, "clip.mp4");
   const thumbFile = path.join(workDir, "thumb.jpeg");
 
+  console.log(
+    `[render] composition ${composition.durationInFrames} frames @ ${composition.fps}fps, concurrency=${concurrency}`
+  );
+  let lastPct = -1;
   await renderMedia({
     composition,
     serveUrl,
@@ -92,6 +96,13 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     concurrency,
     chromiumOptions,
     timeoutInMilliseconds: FRAME_TIMEOUT,
+    onProgress: ({ renderedFrames }) => {
+      const pct = Math.floor((renderedFrames / composition.durationInFrames) * 100);
+      if (pct >= lastPct + 10) {
+        lastPct = pct;
+        console.log(`[render] ${pct}% (${renderedFrames}/${composition.durationInFrames})`);
+      }
+    },
   });
 
   await renderStill({

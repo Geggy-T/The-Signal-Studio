@@ -65,15 +65,23 @@ app.post("/render", async (req, res) => {
   // Async mode: ack immediately, POST result to callback_url when done.
   if (spec.callback_url) {
     res.status(202).json({ status: "accepted", clip_candidate_id: spec.clip_candidate_id });
+    const started = Date.now();
+    console.log(`[render] START ${spec.clip_candidate_id} → callback ${spec.callback_url}`);
     renderClip(spec)
-      .then((result) => postCallback(spec.callback_url!, { status: "done", ...result }))
-      .catch((err) =>
-        postCallback(spec.callback_url!, {
+      .then((result) => {
+        console.log(
+          `[render] DONE ${spec.clip_candidate_id} in ${((Date.now() - started) / 1000).toFixed(1)}s (${result.bytes} bytes)`
+        );
+        return postCallback(spec.callback_url!, { status: "done", ...result });
+      })
+      .catch((err) => {
+        console.error(`[render] FAILED ${spec.clip_candidate_id}:`, err?.stack || err);
+        return postCallback(spec.callback_url!, {
           status: "failed",
           clip_candidate_id: spec.clip_candidate_id,
           error: String(err?.message || err),
-        })
-      );
+        });
+      });
     return;
   }
 
@@ -89,7 +97,7 @@ app.post("/render", async (req, res) => {
 
 async function postCallback(url: string, body: unknown): Promise<void> {
   try {
-    await fetch(url, {
+    const r = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -97,8 +105,13 @@ async function postCallback(url: string, body: unknown): Promise<void> {
       },
       body: JSON.stringify(body),
     });
+    console.log(`[callback] POST ${url} -> ${r.status}`);
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      console.error(`[callback] non-OK ${r.status}: ${t.slice(0, 300)}`);
+    }
   } catch (err) {
-    console.error("[callback] failed", err);
+    console.error("[callback] fetch threw (URL unreachable?)", err);
   }
 }
 
