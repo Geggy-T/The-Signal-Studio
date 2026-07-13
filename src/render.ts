@@ -9,6 +9,7 @@ import { parseBuffer } from "music-metadata";
 import type { RenderSpec } from "./types.js";
 import { putToSignedUrl, uploadWithServiceRole } from "./supabase.js";
 import { SERVE_DIR } from "./serve.js";
+import * as youtube from "./youtube.js";
 
 /** Run ffmpeg, rejecting with the tail of stderr on failure. */
 function runFfmpeg(args: string[]): Promise<void> {
@@ -123,6 +124,8 @@ export interface RenderResult {
   thumbnail_path: string;
   duration_s: number;
   bytes: number;
+  youtube_video_id?: string; // set if auto-uploaded to YouTube
+  youtube_error?: string; // set if auto-upload was attempted but failed
 }
 
 export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
@@ -224,6 +227,29 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     thumbnail_path = await uploadWithServiceRole(`clips/${id}.jpeg`, thumb, "image/jpeg");
   }
 
+  // Optional: auto-upload to YouTube (Unlisted by default). Never fails the render —
+  // the clip is already safely in Supabase; a YouTube hiccup is reported, not fatal.
+  let youtube_video_id: string | undefined;
+  let youtube_error: string | undefined;
+  if (spec.publish && youtube.isConfigured()) {
+    try {
+      console.log(`[youtube] uploading "${spec.publish.title}" (${spec.publish.privacy})`);
+      youtube_video_id = await youtube.uploadVideo({
+        buffer: mp4,
+        title: spec.publish.title,
+        description: spec.publish.description,
+        tags: spec.publish.tags,
+        privacyStatus: spec.publish.privacy,
+      });
+      console.log(`[youtube] uploaded -> https://youtu.be/${youtube_video_id}`);
+    } catch (e) {
+      youtube_error = (e as Error)?.message || String(e);
+      console.error("[youtube] upload failed:", youtube_error);
+    }
+  } else if (spec.publish && !youtube.isConfigured()) {
+    console.log("[youtube] publish requested but YT_* env not set — skipping upload");
+  }
+
   await fs.rm(workDir, { recursive: true, force: true });
   if (cutPath) await fs.rm(cutPath, { force: true }).catch(() => {});
 
@@ -233,5 +259,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     thumbnail_path,
     duration_s: composition.durationInFrames / composition.fps,
     bytes: mp4.byteLength,
+    youtube_video_id,
+    youtube_error,
   };
 }

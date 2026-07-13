@@ -67,6 +67,18 @@ export const RenderSpecSchema = z.object({
     .nullable()
     .optional(),
 
+  // Optional: after render, auto-upload the MP4 to YouTube (Unlisted by default).
+  // If absent or the worker has no YT_* env, the upload is simply skipped.
+  publish: z
+    .object({
+      title: z.string(),
+      description: z.string().default(""),
+      tags: z.array(z.string()).default([]),
+      privacy: z.enum(["private", "unlisted", "public"]).default("unlisted"),
+    })
+    .nullable()
+    .optional(),
+
   // Optional async callback; if present, worker returns 202 and POSTs result here.
   callback_url: z.string().url().nullable().optional(),
 });

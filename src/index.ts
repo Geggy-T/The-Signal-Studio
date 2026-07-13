@@ -5,6 +5,7 @@ import { renderClip } from "./render.js";
 import { downloadUrl, extractAudio, discover } from "./download.js";
 import { putToSignedUrl } from "./supabase.js";
 import { SERVE_DIR } from "./serve.js";
+import * as youtube from "./youtube.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -136,6 +137,31 @@ app.post("/ingest-url", async (req, res) => {
     res.status(500).json({ status: "failed", error: String((err as Error)?.message || err) });
   } finally {
     if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+/**
+ * Flip a YouTube video's privacy (used for the Studio "Make Public" button).
+ * Body: { video_id | url, privacy? }  (privacy defaults to "public").
+ * Credentials live only here; the Studio calls this instead of holding a token.
+ */
+app.post("/youtube/publish", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!youtube.isConfigured()) {
+    return res.status(503).json({ error: "YouTube not configured (YT_* env missing)" });
+  }
+  const { video_id, url, privacy } = req.body ?? {};
+  const id = youtube.parseVideoId(String(video_id || url || ""));
+  if (!id) return res.status(400).json({ error: "video_id or url (a valid YouTube link) required" });
+  const target = (privacy as youtube.Privacy) || "public";
+  try {
+    await youtube.setPrivacy(id, target);
+    console.log(`[youtube] set ${id} -> ${target}`);
+    res.json({ ok: true, video_id: id, privacy: target, url: `https://youtu.be/${id}` });
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || String(err);
+    console.error("[youtube/publish] failed", msg);
+    res.status(500).json({ error: msg });
   }
 });
 
