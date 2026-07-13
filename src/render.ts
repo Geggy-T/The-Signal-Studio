@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { parseBuffer } from "music-metadata";
-import type { RenderSpec } from "./types.js";
+import { buildTimeline, FPS, type RenderSpec } from "./types.js";
 import { putToSignedUrl, uploadWithServiceRole } from "./supabase.js";
 import { SERVE_DIR } from "./serve.js";
 import * as youtube from "./youtube.js";
@@ -118,6 +118,34 @@ function getServeUrl(): Promise<string> {
   return serveUrlPromise;
 }
 
+/**
+ * Choose a thumbnail frame from real source footage instead of the naive midpoint,
+ * which often lands on one of Matt's dark commentary/takeaway cards. We pick a frame
+ * ~40% into the LONGEST source segment (the main content beat), so the thumbnail shows
+ * the actual video. Falls back to the midpoint if the timeline can't be read.
+ */
+function pickThumbnailFrame(spec: RenderSpec, totalFrames: number): number {
+  try {
+    const { items } = buildTimeline(spec);
+    let cursorFrames = 0;
+    let best = { startFrame: 0, frames: 0 };
+    for (const it of items) {
+      const frames = Math.max(1, Math.round(it.durSec * FPS));
+      if (it.kind === "source" && frames > best.frames) {
+        best = { startFrame: cursorFrames, frames };
+      }
+      cursorFrames += frames;
+    }
+    if (best.frames > 0) {
+      const f = best.startFrame + Math.floor(best.frames * 0.4);
+      return Math.min(Math.max(0, f), Math.max(0, totalFrames - 1));
+    }
+  } catch (e) {
+    console.warn("[render] thumbnail frame pick failed, using midpoint:", (e as Error).message);
+  }
+  return Math.floor(totalFrames * 0.5);
+}
+
 export interface RenderResult {
   clip_candidate_id: string;
   output_path: string; // storage path
@@ -199,7 +227,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     composition,
     serveUrl,
     output: thumbFile,
-    frame: Math.floor(composition.durationInFrames * 0.5),
+    frame: pickThumbnailFrame(spec, composition.durationInFrames),
     inputProps,
     imageFormat: "jpeg",
     scale,
