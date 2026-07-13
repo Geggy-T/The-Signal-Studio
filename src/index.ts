@@ -209,4 +209,42 @@ app.listen(PORT, () => {
       console.log(`[yt-dlp] version ${(stdout || "unknown").trim()}`)
     )
   );
+  startTickHeartbeat();
 });
+
+/**
+ * Pipeline heartbeat. The Studio pipeline advances server-side via POST /api/tick,
+ * but something has to call it on a schedule. This always-on worker already holds
+ * the shared RENDER_WORKER_SECRET, so it pings the Studio's /api/tick regularly,
+ * letting clips run to completion with no browser open. Overlap-guarded.
+ */
+function startTickHeartbeat(): void {
+  const tickUrl = process.env.STUDIO_TICK_URL || "https://signal-studio-scribe.lovable.app/api/tick";
+  const intervalMs = Number(process.env.TICK_INTERVAL_MS || 120000);
+  if (!WORKER_SECRET || !tickUrl) {
+    console.log("[tick] heartbeat disabled (no RENDER_WORKER_SECRET or STUDIO_TICK_URL)");
+    return;
+  }
+  let ticking = false;
+  const fire = async () => {
+    if (ticking) return;
+    ticking = true;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.max(intervalMs - 5000, 30000));
+      const r = await fetch(tickUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${WORKER_SECRET}`, "content-type": "application/json" },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+      const body = await r.text().catch(() => "");
+      if (r.status !== 200) console.warn(`[tick] ${r.status}: ${body.slice(0, 160)}`);
+    } catch (err) {
+      console.warn("[tick] failed", (err as Error)?.message || err);
+    } finally {
+      ticking = false;
+    }
+  };
+  setInterval(fire, intervalMs);
+  console.log(`[tick] heartbeat every ${intervalMs / 1000}s -> ${tickUrl}`);
+}

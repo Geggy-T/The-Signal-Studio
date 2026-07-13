@@ -148,6 +148,12 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   // Render at 2/3 scale so 1080x1920 becomes 720x1280 — far less encoder memory,
   // layout/fonts stay proportional automatically. Set RENDER_SCALE=1 once you add RAM.
   const scale = Number(process.env.RENDER_SCALE || 2 / 3);
+  // Cap Remotion's OffthreadVideo frame cache. In a container Remotion mis-detects
+  // available RAM and sizes this cache too large, so on a video-heavy render it grows
+  // until the Chrome page thrashes and freezes ("timeout evaluating page function").
+  // An explicit modest cap keeps memory flat. Tune via OFFTHREAD_CACHE_MB.
+  const offthreadVideoCacheSizeInBytes =
+    Number(process.env.OFFTHREAD_CACHE_MB || 256) * 1024 * 1024;
 
   const composition = await selectComposition({
     serveUrl,
@@ -174,6 +180,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     crf: 23,
     concurrency,
     scale,
+    offthreadVideoCacheSizeInBytes,
     chromiumOptions,
     timeoutInMilliseconds: FRAME_TIMEOUT,
     onProgress: ({ renderedFrames }) => {
@@ -193,6 +200,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     inputProps,
     imageFormat: "jpeg",
     scale,
+    offthreadVideoCacheSizeInBytes,
     chromiumOptions,
     timeoutInMilliseconds: FRAME_TIMEOUT,
   });
