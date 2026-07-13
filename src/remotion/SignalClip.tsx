@@ -13,7 +13,7 @@ import type { RenderSpec, Word } from "../types";
 import { FPS, buildTimeline, deAI, TAKEAWAY_LEAD_SECONDS } from "../types";
 
 const s = (sec: number) => Math.round(sec * FPS);
-const MATT_VOLUME = 0.7; // Matt's VO sits under the source, not over it
+const MATT_VOLUME = 0.8; // Matt's VO level in the mix (raised ~15% from 0.7)
 const FONT = "'Space Grotesk', system-ui, sans-serif";
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
