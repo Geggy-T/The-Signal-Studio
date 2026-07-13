@@ -5,11 +5,12 @@ import {
   Freeze,
   interpolate,
   OffthreadVideo,
+  Sequence,
   Series,
   useCurrentFrame,
 } from "remotion";
 import type { RenderSpec, Word } from "../types";
-import { FPS, buildTimeline, deAI } from "../types";
+import { FPS, buildTimeline, deAI, TAKEAWAY_LEAD_SECONDS } from "../types";
 
 const s = (sec: number) => Math.round(sec * FPS);
 const MATT_VOLUME = 0.7; // Matt's VO sits under the source, not over it
@@ -266,7 +267,11 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
           return (
             <Series.Sequence key={i} durationInFrames={frames}>
               <TakeawayCard spec={spec} />
-              {spec.audio.takeaway_url ? <Audio src={spec.audio.takeaway_url} volume={MATT_VOLUME} /> : null}
+              {spec.audio.takeaway_url ? (
+                <Sequence from={Math.round(TAKEAWAY_LEAD_SECONDS * FPS)}>
+                  <Audio src={spec.audio.takeaway_url} volume={MATT_VOLUME} />
+                </Sequence>
+              ) : null}
             </Series.Sequence>
           );
         })}

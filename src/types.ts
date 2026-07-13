@@ -84,6 +84,8 @@ export const TAKEAWAY_SECONDS = 5;
 export const MIN_HOOK_SECONDS = 2.5;
 export const MIN_TAKEAWAY_SECONDS = 3;
 export const SEGMENT_PAD = 0.6;
+// A short breath after the speaker's last word before Matt's closing takeaway VO.
+export const TAKEAWAY_LEAD_SECONDS = 0.45;
 
 /**
  * Segment lengths, driven by the MEASURED audio durations so nothing gets cut off.
@@ -95,7 +97,7 @@ export function computeSegmentSeconds(spec: RenderSpec) {
   // hookLen = the opening window where Matt's hook VO plays OVER the start of the clip
   // (the clip is on-screen the whole time — no black cold-open card).
   const hookLen = Math.max(MIN_HOOK_SECONDS, hookAudio + SEGMENT_PAD);
-  const takeawayLen = Math.max(MIN_TAKEAWAY_SECONDS, takeawayAudio + SEGMENT_PAD);
+  const takeawayLen = Math.max(MIN_TAKEAWAY_SECONDS, takeawayAudio + SEGMENT_PAD + TAKEAWAY_LEAD_SECONDS);
   const clipLen = Math.max(0.5, spec.t_out - spec.t_in);
   // Total = clip (which the hook overlays) + the closing takeaway card.
   return { hookLen, clipLen, takeawayLen, total: clipLen + takeawayLen };
@@ -164,12 +166,36 @@ function snapToPause(spec: RenderSpec, pClip: number): number {
   return clamp(words[i].end - spec.t_in + 0.08);
 }
 
+/**
+ * The final cut into the takeaway: end the last speaker segment on a completed
+ * sentence near t_out, so Matt's closing take never clips the speaker mid-sentence.
+ * Only trims back a few seconds to find a clean break; otherwise ends at t_out.
+ */
+function snapClipEnd(spec: RenderSpec, cursor: number): number {
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const words = spec.captions;
+  if (!words.length) return C;
+  const absEnd = spec.t_in + C; // = t_out (absolute source seconds)
+  const LOOKBACK = 5;
+  const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
+  let best = -1;
+  for (const w of words) {
+    if (w.end > absEnd) break;
+    if (w.end >= absEnd - LOOKBACK && endsSentence(w.text)) best = w.end;
+  }
+  if (best > 0) {
+    const rel = Math.min(C, best - spec.t_in + 0.25); // small breath after the last word
+    if (rel > cursor + 2) return rel; // keep the final speaker segment a sensible length
+  }
+  return C;
+}
+
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
   const C = Math.max(1, spec.t_out - spec.t_in);
   const INSERT_PAD = 0.5;
   const takeawayLen = Math.max(
     MIN_TAKEAWAY_SECONDS,
-    (spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS) + SEGMENT_PAD
+    (spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS) + SEGMENT_PAD + TAKEAWAY_LEAD_SECONDS
   );
 
   const items: TimelineItem[] = [];
@@ -218,7 +244,8 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     cursor = r.at;
   }
   if (cursor < C - 0.05) {
-    items.push({ kind: "source", startSec: cursor, endSec: C, durSec: C - cursor });
+    const endSec = snapClipEnd(spec, cursor);
+    items.push({ kind: "source", startSec: cursor, endSec, durSec: endSec - cursor });
   }
   items.push({ kind: "takeaway", durSec: takeawayLen });
 
