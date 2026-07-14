@@ -100,18 +100,25 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
     url,
   ]);
 
-  // Extract mono 16kHz audio for transcription (16kHz is what Whisper uses). Scale
-  // the bitrate to the source length so even long podcasts stay under Groq's 25MB
-  // cap. 16-32kbps mono is plenty for ASR. Target ~22MB for headroom; clamp 16-32k.
-  // Covers up to ~3.5h at the 16k floor; longer than that would need chunking.
-  let audioKbps = 32;
-  if (durationS && durationS > 0) {
-    const fitKbps = Math.floor((22 * 1024 * 1024 * 8) / (durationS * 1000));
-    audioKbps = Math.max(16, Math.min(32, fitKbps));
+  // Extract mono 16kHz audio for transcription. Encode at 32k, then if the file is
+  // over ~22MB re-encode at a lower bitrate scaled from the MEASURED size so it lands
+  // under Groq's 25MB cap. Measured-size (not duration) is deliberate: some sources
+  // report no duration, and a duration-based guess would silently fall back to 32k
+  // and overflow. 16-32k mono is plenty for ASR. Covers up to ~3.5h at the 16k floor.
+  const TARGET_AUDIO = 22 * 1024 * 1024;
+  const encodeAudio = (kbps: number) =>
+    run("ffmpeg", [
+      "-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", `${kbps}k`, audioPath,
+    ]);
+  await encodeAudio(32);
+  const aSize = (await fs.stat(audioPath)).size;
+  if (aSize > TARGET_AUDIO) {
+    const scaled = Math.max(16, Math.min(32, Math.floor(32 * (TARGET_AUDIO / aSize))));
+    if (scaled < 32) {
+      console.log(`[audio] ${(aSize / 1048576).toFixed(1)}MB at 32k too big; re-encoding at ${scaled}k`);
+      await encodeAudio(scaled);
+    }
   }
-  await run("ffmpeg", [
-    "-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", `${audioKbps}k`, audioPath,
-  ]);
 
   return { videoPath, audioPath, workDir, title, durationS };
 }
