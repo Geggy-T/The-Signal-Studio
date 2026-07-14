@@ -100,8 +100,18 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
     url,
   ]);
 
-  // Extract mono, low-bitrate audio for transcription (16kHz is what Whisper uses).
-  await run("ffmpeg", ["-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", audioPath]);
+  // Extract mono 16kHz audio for transcription (16kHz is what Whisper uses). Scale
+  // the bitrate to the source length so even long podcasts stay under Groq's 25MB
+  // cap. 16-32kbps mono is plenty for ASR. Target ~22MB for headroom; clamp 16-32k.
+  // Covers up to ~3.5h at the 16k floor; longer than that would need chunking.
+  let audioKbps = 32;
+  if (durationS && durationS > 0) {
+    const fitKbps = Math.floor((22 * 1024 * 1024 * 8) / (durationS * 1000));
+    audioKbps = Math.max(16, Math.min(32, fitKbps));
+  }
+  await run("ffmpeg", [
+    "-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", `${audioKbps}k`, audioPath,
+  ]);
 
   return { videoPath, audioPath, workDir, title, durationS };
 }
