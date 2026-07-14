@@ -78,6 +78,11 @@ export const RenderSpecSchema = z.object({
       description: z.string().default(""),
       tags: z.array(z.string()).default([]),
       privacy: z.enum(["private", "unlisted", "public"]).default("unlisted"),
+      // Optional scheduled release. ISO-8601/RFC-3339 UTC timestamp. When present
+      // the video is uploaded PRIVATE with a YouTube publishAt, so it goes Public
+      // by itself at that instant and gets the normal fresh-publish Shorts push
+      // (a manual private->public flip does not). Ignored if in the past.
+      publish_at: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),

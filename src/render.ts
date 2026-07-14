@@ -266,13 +266,22 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   let youtube_error: string | undefined;
   if (spec.publish && youtube.isConfigured()) {
     try {
-      console.log(`[youtube] uploading "${spec.publish.title}" (${spec.publish.privacy})`);
+      const scheduleAt =
+        spec.publish.publish_at && Date.parse(spec.publish.publish_at) > Date.now()
+          ? spec.publish.publish_at
+          : undefined;
+      console.log(
+        scheduleAt
+          ? `[youtube] uploading "${spec.publish.title}" (scheduled public @ ${scheduleAt})`
+          : `[youtube] uploading "${spec.publish.title}" (${spec.publish.privacy})`
+      );
       youtube_video_id = await youtube.uploadVideo({
         buffer: mp4,
         title: spec.publish.title,
         description: spec.publish.description,
         tags: spec.publish.tags,
         privacyStatus: spec.publish.privacy,
+        publishAt: scheduleAt,
       });
       console.log(`[youtube] uploaded -> https://youtu.be/${youtube_video_id}`);
       // Set the custom thumbnail (non-fatal: needs a verified channel).

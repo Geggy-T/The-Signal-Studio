@@ -56,6 +56,10 @@ export interface UploadInput {
   description: string;
   tags: string[];
   privacyStatus?: Privacy; // default "unlisted"
+  // Optional scheduled release (ISO-8601 UTC). When set and in the future, the
+  // video is forced PRIVATE with a publishAt so YouTube flips it Public itself at
+  // that time (this earns the fresh-publish Shorts push a manual flip misses).
+  publishAt?: string;
 }
 
 /**
@@ -66,6 +70,18 @@ export async function uploadVideo(input: UploadInput): Promise<string> {
   const accessToken = await getAccessToken();
   const categoryId = process.env.YT_CATEGORY_ID || "28"; // Science & Technology
 
+  // A future publishAt schedules the release. YouTube REQUIRES privacyStatus
+  // "private" whenever publishAt is set; it auto-flips to Public at that instant.
+  const scheduleAt =
+    input.publishAt && Date.parse(input.publishAt) > Date.now() ? input.publishAt : undefined;
+
+  const status: Record<string, unknown> = {
+    privacyStatus: scheduleAt ? "private" : input.privacyStatus ?? "unlisted",
+    selfDeclaredMadeForKids: false,
+    embeddable: true,
+  };
+  if (scheduleAt) status.publishAt = new Date(scheduleAt).toISOString();
+
   const metadata = {
     snippet: {
       title: input.title.slice(0, 100),
@@ -73,11 +89,7 @@ export async function uploadVideo(input: UploadInput): Promise<string> {
       tags: (input.tags ?? []).slice(0, 15),
       categoryId,
     },
-    status: {
-      privacyStatus: input.privacyStatus ?? "unlisted",
-      selfDeclaredMadeForKids: false,
-      embeddable: true,
-    },
+    status,
   };
 
   // 1) Start resumable session.
