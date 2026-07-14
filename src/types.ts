@@ -97,7 +97,7 @@ export const MIN_HOOK_SECONDS = 2.5;
 export const MIN_TAKEAWAY_SECONDS = 3;
 export const SEGMENT_PAD = 0.6;
 // A short breath after the speaker's last word before Matt's closing takeaway VO.
-export const TAKEAWAY_LEAD_SECONDS = 0.45;
+export const TAKEAWAY_LEAD_SECONDS = 0.6;
 
 /**
  * Segment lengths, driven by the MEASURED audio durations so nothing gets cut off.
@@ -188,16 +188,31 @@ function snapClipEnd(spec: RenderSpec, cursor: number): number {
   const words = spec.captions;
   if (!words.length) return C;
   const absEnd = spec.t_in + C; // = t_out (absolute source seconds)
-  const LOOKBACK = 5;
+  const LOOKBACK = 6;
+  const TAIL = 0.4; // breath so the speaker's final word fully lands before the takeaway
   const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
-  let best = -1;
+
+  // 1) Best: end just after a completed sentence within the lookback window.
+  let sentenceEnd = -1;
   for (const w of words) {
     if (w.end > absEnd) break;
-    if (w.end >= absEnd - LOOKBACK && endsSentence(w.text)) best = w.end;
+    if (w.end >= absEnd - LOOKBACK && endsSentence(w.text)) sentenceEnd = w.end;
   }
-  if (best > 0) {
-    const rel = Math.min(C, best - spec.t_in + 0.25); // small breath after the last word
-    if (rel > cursor + 2) return rel; // keep the final speaker segment a sensible length
+  if (sentenceEnd > 0) {
+    const rel = Math.min(C, sentenceEnd - spec.t_in + TAIL);
+    if (rel > cursor + 1.5) return rel; // keep the final speaker segment a sensible length
+  }
+
+  // 2) Otherwise NEVER cut mid-word: end just after the last COMPLETE word at/before
+  //    t_out (plus a breath), so the speaker's closing word or two are never clipped.
+  let lastWordEnd = -1;
+  for (const w of words) {
+    if (w.end > absEnd) break;
+    lastWordEnd = w.end;
+  }
+  if (lastWordEnd > 0) {
+    const rel = Math.min(C, lastWordEnd - spec.t_in + TAIL);
+    if (rel > cursor + 1) return rel;
   }
   return C;
 }
