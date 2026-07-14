@@ -144,15 +144,33 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
   );
 };
 
-/** The clip PAUSES on a frozen frame while Matt gives his take (source silent). */
-const MattInsert: React.FC<{ spec: RenderSpec; freezeSec: number; text: string }> = ({
-  spec,
-  freezeSec,
-  text,
-}) => {
+/** First n words of a string (cleaned). */
+function firstWords(sIn: string, n: number): string {
+  return deAI(sIn).split(/\s+/).filter(Boolean).slice(0, n).join(" ");
+}
+/** Everything after the first n words (cleaned). */
+function restWords(sIn: string, n: number): string {
+  return deAI(sIn).split(/\s+/).filter(Boolean).slice(n).join(" ");
+}
+
+/** The clip PAUSES on a frozen frame while Matt gives his take (source silent).
+ *  On the OPENING hook, the first few words punch in huge and bold as a
+ *  scroll-stopping pattern interrupt in the first ~0.3s. */
+const MattInsert: React.FC<{
+  spec: RenderSpec;
+  freezeSec: number;
+  text: string;
+  isOpening?: boolean;
+}> = ({ spec, freezeSec, text, isOpening }) => {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
   const clean = deAI(text);
+  const FLASH_WORDS = 3;
+  const flash = isOpening ? firstWords(text, FLASH_WORDS) : "";
+  const body = isOpening ? restWords(text, FLASH_WORDS) : clean;
+  // Punch-in for the opening flash: quick scale + fade over the first ~6 frames.
+  const flashScale = interpolate(frame, [0, 6], [0.72, 1], { extrapolateRight: "clamp" });
+  const flashOpacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
       {/* Frozen source frame behind Matt */}
@@ -167,10 +185,49 @@ const MattInsert: React.FC<{ spec: RenderSpec; freezeSec: number; text: string }
       {/* Dim so it's clear we've cut to commentary */}
       <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.62)" }} />
       <LogoBug spec={spec} />
+      {flash ? (
+        <div
+          style={{
+            position: "absolute",
+            top: "13%",
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "center",
+            padding: "0 56px",
+            opacity: flashOpacity,
+          }}
+        >
+          <div
+            style={{
+              transform: `scale(${flashScale})`,
+              textAlign: "center",
+              color: spec.brand.accent,
+              fontFamily: FONT,
+              fontSize: 132,
+              fontWeight: 800,
+              lineHeight: 1.02,
+              letterSpacing: 1,
+              textTransform: "uppercase",
+              WebkitTextStroke: "2px rgba(0,0,0,0.5)",
+              textShadow: "0 4px 20px rgba(0,0,0,0.9)",
+            }}
+          >
+            {flash}
+          </div>
+        </div>
+      ) : null}
       <AbsoluteFill
         style={{ justifyContent: "center", alignItems: "center", padding: "0 90px", opacity }}
       >
-        <div style={{ textAlign: "center", maxWidth: 940, fontFamily: FONT }}>
+        <div
+          style={{
+            textAlign: "center",
+            maxWidth: 940,
+            fontFamily: FONT,
+            marginTop: isOpening ? 200 : 0,
+          }}
+        >
           <div
             style={{
               color: spec.brand.accent,
@@ -183,7 +240,7 @@ const MattInsert: React.FC<{ spec: RenderSpec; freezeSec: number; text: string }
           >
             ▍ Matt
           </div>
-          {clean ? (
+          {body ? (
             <div
               style={{
                 color: spec.brand.text,
@@ -194,7 +251,7 @@ const MattInsert: React.FC<{ spec: RenderSpec; freezeSec: number; text: string }
                 textShadow: "0 2px 12px rgba(0,0,0,0.8)",
               }}
             >
-              {clean}
+              {body}
             </div>
           ) : null}
         </div>
@@ -259,7 +316,7 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
           if (it.kind === "insert") {
             return (
               <Series.Sequence key={i} durationInFrames={frames}>
-                <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} />
+                <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} isOpening={i === 0} />
                 {it.url ? <Audio src={it.url} volume={MATT_VOLUME} /> : null}
               </Series.Sequence>
             );
