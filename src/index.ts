@@ -16,13 +16,20 @@ app.use("/local", express.static(SERVE_DIR));
 const PORT = Number(process.env.PORT || 8080);
 const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 
+// Bump this on every worker build. /health echoes it so we can prove which build is
+// actually live (independent of any deploy dashboard). audio_sizecheck=true means the
+// download.ts measured-size audio re-encode (final47+) is present in this build.
+const BUILD = "final48-audiofit3";
+
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
   const h = req.header("authorization") || "";
   return h === `Bearer ${WORKER_SECRET}`;
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "signal-render-worker" }));
+app.get("/health", (_req, res) =>
+  res.json({ ok: true, service: "signal-render-worker", build: BUILD, audio_sizecheck: true })
+);
 
 /**
  * Local-download queue. The Studio enqueues web-video (YouTube etc.) downloads here;
@@ -252,7 +259,7 @@ async function postCallback(url: string, body: unknown): Promise<void> {
 }
 
 app.listen(PORT, () => {
-  console.log(`signal-render-worker listening on :${PORT}`);
+  console.log(`signal-render-worker listening on :${PORT} [build ${BUILD}]`);
   // Log the yt-dlp version at boot so we can confirm the nightly build is live.
   import("node:child_process").then(({ exec }) =>
     exec("yt-dlp --version", (_e, stdout) =>
