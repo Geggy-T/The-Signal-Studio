@@ -150,23 +150,35 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
       {/* Blurred, darkened copy fills the frame so the 16:9 clip never sits in black
-          bars. Muted (the sharp copy carries the audio); same src+time so it shares
-          decode with the sharp copy. */}
-      <OffthreadVideo
-        src={spec.source_url}
-        startFrom={s(spec.t_in + startSec)}
-        endAt={s(spec.t_in + endSec)}
-        muted
-        volume={0}
+          bars. Rendered into a 1/4-size box then scaled 4x: the gaussian runs on
+          ~1/16 the pixels (it is blurred anyway), which is what lets a full 1080p
+          render fit in memory instead of OOM-ing. Muted; sharp copy carries audio. */}
+      <div
         style={{
           position: "absolute",
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          transform: "scale(1.15)",
-          filter: "blur(22px) brightness(0.5)",
+          top: 0,
+          left: 0,
+          width: "25%",
+          height: "25%",
+          transform: "scale(4)",
+          transformOrigin: "top left",
         }}
-      />
+      >
+        <OffthreadVideo
+          src={spec.source_url}
+          startFrom={s(spec.t_in + startSec)}
+          endAt={s(spec.t_in + endSec)}
+          muted
+          volume={0}
+          style={{
+            position: "absolute",
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            filter: "blur(6px) brightness(0.5)",
+          }}
+        />
+      </div>
       <OffthreadVideo
         src={spec.source_url}
         startFrom={s(spec.t_in + startSec)}
@@ -214,21 +226,33 @@ const MattInsert: React.FC<{
   const flashFontSize = flash.length <= 14 ? 132 : flash.length <= 26 ? 108 : flash.length <= 40 ? 86 : 70;
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
-      {/* Blurred fill so the frozen frame never sits in black bars. */}
+      {/* Blurred fill so the frozen frame never sits in black bars. Rendered at
+          1/4 size then scaled 4x so the gaussian is ~16x cheaper (see SourceSegment). */}
       <Freeze frame={s(freezeSec)}>
-        <OffthreadVideo
-          src={spec.source_url}
-          muted
-          volume={0}
+        <div
           style={{
             position: "absolute",
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            transform: "scale(1.15)",
-            filter: "blur(22px) brightness(0.5)",
+            top: 0,
+            left: 0,
+            width: "25%",
+            height: "25%",
+            transform: "scale(4)",
+            transformOrigin: "top left",
           }}
-        />
+        >
+          <OffthreadVideo
+            src={spec.source_url}
+            muted
+            volume={0}
+            style={{
+              position: "absolute",
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "blur(6px) brightness(0.5)",
+            }}
+          />
+        </div>
       </Freeze>
       {/* Frozen source frame behind Matt */}
       <Freeze frame={s(freezeSec)}>
