@@ -48,7 +48,7 @@ export interface DownloadResult {
 
 /**
  * Download a video URL (YouTube or any yt-dlp-supported site) as:
- *  - video.mp4  (capped at 720p to keep size sane, for the render)
+ *  - video.mp4  (up to 1080p, MAX_SOURCE_HEIGHT to cap lower, for the render)
  *  - audio.mp3  (mono, low-bitrate, for cheap/small transcription under Groq's 25MB cap)
  *
  * NOTE: only use for rights-clean sources you are cleared to use.
@@ -81,15 +81,18 @@ export async function downloadUrl(url: string): Promise<DownloadResult> {
     // Non-fatal — continue to download.
   }
 
-  // Download <=720p, merging separate video+audio to mp4. No hard ext filter on the
-  // streams (YouTube often only has webm/vp9 at a given res); we just merge to mp4.
+  // Download up to 1080p, merging separate video+audio to mp4. 1080p is the source
+  // ceiling for a crisp 1080x1920 render; capped so files stay sane. Override with
+  // MAX_SOURCE_HEIGHT (e.g. 720) if a small container is disk/RAM constrained. No hard
+  // ext filter (YouTube often only has webm/vp9 at a given res); we just merge to mp4.
+  const maxH = Number(process.env.MAX_SOURCE_HEIGHT || 1080);
   await run("yt-dlp", [
     "--no-playlist",
     "--no-warnings",
     ...ytArgs,
     ...ck,
     "-f",
-    "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best",
+    `bestvideo[height<=${maxH}]+bestaudio/best[height<=${maxH}]/bestvideo+bestaudio/best`,
     "--merge-output-format",
     "mp4",
     "-o",

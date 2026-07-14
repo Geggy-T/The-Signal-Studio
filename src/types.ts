@@ -161,16 +161,20 @@ function snapToPause(spec: RenderSpec, pClip: number): number {
   const abs = spec.t_in + pClip;
   const i = words.findIndex((w) => w.end >= abs);
   if (i === -1) return pClip;
-  const windowEnd = abs + 6; // look ahead up to ~6s for a real break
   const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
   const clamp = (x: number) => Math.min(C - 0.3, Math.max(0.3, x));
 
-  // 1) Best: cut right after a completed sentence.
+  // 1) Best: the NEXT completed sentence at/after the desired point. Search well
+  //    ahead (a sentence can run 10s+), so we snap to a true sentence end rather
+  //    than bailing to a mid-sentence pause.
+  const sentenceWindow = abs + 16;
   for (let k = i; k < words.length; k++) {
-    if (words[k].end > windowEnd) break;
+    if (words[k].end > sentenceWindow) break;
     if (endsSentence(words[k].text)) return clamp(words[k].end - spec.t_in + 0.15);
   }
-  // 2) Otherwise the longest pause in the window (a natural clause break).
+  // 2) Otherwise the longest pause in a wide window, but only if it is a REAL
+  //    pause (>= 0.4s). A 0.2s gap is just breathing between words, not a break.
+  const windowEnd = abs + 12;
   let bestIdx = -1;
   let bestGap = 0;
   for (let k = i; k < words.length - 1; k++) {
@@ -181,7 +185,7 @@ function snapToPause(spec: RenderSpec, pClip: number): number {
       bestIdx = k;
     }
   }
-  if (bestIdx !== -1 && bestGap >= 0.22) return clamp(words[bestIdx].end - spec.t_in + 0.12);
+  if (bestIdx !== -1 && bestGap >= 0.4) return clamp(words[bestIdx].end - spec.t_in + 0.12);
   // 3) Fallback: end of the current word (never mid-word).
   return clamp(words[i].end - spec.t_in + 0.08);
 }
@@ -256,11 +260,13 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   // during a long uninterrupted opening clip, so the first cut-in comes at ~FIRST_SEG
   // instead of the old even-split (which pushed it ~18s+ in). Later takes still
   // spread across the rest so Matt stays present to the end.
-  // IMPORTANT: snapToPause still governs every actual cut, so cuts always land on a
-  // natural sentence end or pause and never chop the speaker mid-sentence. We only
-  // change where the first cut is AIMED, not how it lands.
+  // IMPORTANT: every cut-in lands ONLY after the speaker completes a sentence.
+  // We collect the sentence-end times up front and place each take on the nearest
+  // one. We NEVER nudge a chosen time off its sentence end for spacing; if two
+  // takes would collide we pick a different sentence end (or drop the take). This
+  // is what guarantees Matt never interrupts mid-sentence.
   const FIRST_SEG = 8; // aim Matt's first take ~8s into the clip
-  const HARD_MIN = 7; // never closer than this (still snapped to a clean pause)
+  const HARD_MIN = 7; // never closer than this
   const END_GUARD = 10; // leave a real final speaker stretch before the takeaway
   const raw = spec.audio.interjections;
   // Latest point a cut-in may land. The final speaker run (END_GUARD) sits AFTER
@@ -270,20 +276,49 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   const capacity = Math.max(1, 1 + Math.floor((lastAllowed - FIRST_SEG) / HARD_MIN));
   const M = Math.min(raw.length, capacity);
   const valid: R[] = [];
-  // Start prev far enough back that the first take at FIRST_SEG is never nudged.
+
+  // Speaker sentence-end times (clip-relative, plus a small breath after the
+  // period so the final word fully lands before Matt speaks).
+  const endsSentenceTok = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
+  const sentenceEnds: number[] = [];
+  for (const w of spec.captions) {
+    if (!endsSentenceTok(w.text)) continue;
+    const rel = w.end - spec.t_in + 0.15;
+    if (rel > 0.5 && rel < C - 0.4) sentenceEnds.push(rel);
+  }
+  sentenceEnds.sort((a, b) => a - b);
+
+  // Start prev far enough back that the first candidate near FIRST_SEG is eligible.
   let prev = FIRST_SEG - HARD_MIN - 1;
   for (let i = 0; i < M; i++) {
     // Even fractions from FIRST_SEG..lastAllowed: first take lands early, the rest
     // spread across the clip so Matt stays present right up to the final stretch.
     const frac = M <= 1 ? 0 : i / (M - 1);
     const desired = FIRST_SEG + frac * (lastAllowed - FIRST_SEG);
-    let at = snapToPause(spec, desired);
-    // Keep spacing AND stay inside the window by clamping (never drop a take): the
-    // old code broke out of the loop when a target sat at the boundary, which
-    // silently discarded the final interjection and left a long dead stretch.
-    at = Math.max(at, prev + HARD_MIN);
-    at = Math.min(at, lastAllowed);
-    if (at <= prev + 0.5) continue; // genuinely no room left; skip this one
+    let at = -1;
+    if (sentenceEnds.length) {
+      // Pick the sentence end nearest the target that respects spacing + window.
+      // Because we choose from real sentence ends only, the cut is guaranteed to
+      // fall after a completed sentence (never mid-sentence).
+      let bestDist = Infinity;
+      for (const s of sentenceEnds) {
+        if (s < prev + HARD_MIN) continue; // too close to the previous take
+        if (s > lastAllowed) break; // past the final-stretch guard
+        const d = Math.abs(s - desired);
+        if (d < bestDist) {
+          bestDist = d;
+          at = s;
+        }
+      }
+      if (at < 0) continue; // no clean sentence end fits here: skip, don't chop
+    } else {
+      // Rare: transcript carries no usable punctuation. Fall back to the pause
+      // snapper (now requires a real >= 0.4s pause) and clamp into the window.
+      at = snapToPause(spec, desired);
+      at = Math.max(at, prev + HARD_MIN);
+      at = Math.min(at, lastAllowed);
+      if (at <= prev + 0.5) continue;
+    }
     const it = raw[i];
     valid.push({ at, dur: (it.duration_s ?? 3) + INSERT_PAD, url: it.url, text: it.text ?? "" });
     prev = at;
