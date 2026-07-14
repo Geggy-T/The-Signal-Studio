@@ -47,7 +47,7 @@ const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
       alignItems: "center",
     }}
   >
-    <NibMark color={spec.brand.accent} size={30} />
+    <NibMark color={spec.brand.text} size={30} />
     {spec.brand.channel_name}
   </div>
 );
