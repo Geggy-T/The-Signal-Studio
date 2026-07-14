@@ -255,21 +255,30 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   // natural sentence end or pause and never chop the speaker mid-sentence. We only
   // change where the first cut is AIMED, not how it lands.
   const FIRST_SEG = 8; // aim Matt's first take ~8s into the clip
-  const MIN_SEG = 12; // desired minimum speaker run between the later cut-ins
   const HARD_MIN = 7; // never closer than this (still snapped to a clean pause)
-  const END_GUARD = 8; // leave a real final speaker stretch before the takeaway
+  const END_GUARD = 10; // leave a real final speaker stretch before the takeaway
   const raw = spec.audio.interjections;
-  const usable = Math.max(0, C - END_GUARD - FIRST_SEG);
-  const M = Math.min(raw.length, 1 + Math.floor(usable / MIN_SEG));
+  // Latest point a cut-in may land. The final speaker run (END_GUARD) sits AFTER
+  // this, so a take placed here is never dropped for being "too late".
+  const lastAllowed = Math.max(FIRST_SEG + HARD_MIN, C - END_GUARD);
+  // How many takes physically fit with HARD_MIN spacing; otherwise place them all.
+  const capacity = Math.max(1, 1 + Math.floor((lastAllowed - FIRST_SEG) / HARD_MIN));
+  const M = Math.min(raw.length, capacity);
   const valid: R[] = [];
-  let prev = 0;
+  // Start prev far enough back that the first take at FIRST_SEG is never nudged.
+  let prev = FIRST_SEG - HARD_MIN - 1;
   for (let i = 0; i < M; i++) {
-    // First take lands early; the rest spread evenly across the remaining clip.
-    const target =
-      M <= 1 ? FIRST_SEG : FIRST_SEG + (i * (C - END_GUARD - FIRST_SEG)) / (M - 1);
-    let at = snapToPause(spec, target);
+    // Even fractions from FIRST_SEG..lastAllowed: first take lands early, the rest
+    // spread across the clip so Matt stays present right up to the final stretch.
+    const frac = M <= 1 ? 0 : i / (M - 1);
+    const desired = FIRST_SEG + frac * (lastAllowed - FIRST_SEG);
+    let at = snapToPause(spec, desired);
+    // Keep spacing AND stay inside the window by clamping (never drop a take): the
+    // old code broke out of the loop when a target sat at the boundary, which
+    // silently discarded the final interjection and left a long dead stretch.
     at = Math.max(at, prev + HARD_MIN);
-    if (at > C - END_GUARD) break; // leave the speaker a real final stretch
+    at = Math.min(at, lastAllowed);
+    if (at <= prev + 0.5) continue; // genuinely no room left; skip this one
     const it = raw[i];
     valid.push({ at, dur: (it.duration_s ?? 3) + INSERT_PAD, url: it.url, text: it.text ?? "" });
     prev = at;
