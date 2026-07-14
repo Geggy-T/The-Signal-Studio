@@ -191,6 +191,48 @@ export async function setPrivacy(videoId: string, privacyStatus: Privacy): Promi
   }
 }
 
+/**
+ * Cancel a scheduled release. Reads the current status, DROPS publishAt, and
+ * forces privacyStatus "private" so the video will not auto-publish. Used by the
+ * Studio "Cancel" button on the scheduled list. Idempotent: a video with no
+ * publishAt just stays private.
+ */
+export async function unschedule(videoId: string): Promise<void> {
+  const accessToken = await getAccessToken();
+
+  const getRes = await fetch(
+    `${VIDEOS_URL}?part=status&id=${encodeURIComponent(videoId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!getRes.ok) {
+    const t = await getRes.text().catch(() => "");
+    throw new Error(`YouTube videos.list ${getRes.status}: ${t.slice(0, 300)}`);
+  }
+  const getJson = (await getRes.json()) as {
+    items?: Array<{ status?: Record<string, unknown> }>;
+  };
+  const current = getJson.items?.[0]?.status;
+  if (!current) throw new Error(`YouTube: video ${videoId} not found (or not owned by this channel)`);
+
+  // Rebuild status without publishAt and pinned to private.
+  const { publishAt: _drop, ...rest } = current as Record<string, unknown>;
+  void _drop;
+  const nextStatus = { ...rest, privacyStatus: "private" };
+
+  const updRes = await fetch(`${VIDEOS_URL}?part=status`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json; charset=UTF-8",
+    },
+    body: JSON.stringify({ id: videoId, status: nextStatus }),
+  });
+  if (!updRes.ok) {
+    const t = await updRes.text().catch(() => "");
+    throw new Error(`YouTube videos.update ${updRes.status}: ${t.slice(0, 400)}`);
+  }
+}
+
 /** Parse a YouTube video id from a full URL or return the raw id if already one. */
 export function parseVideoId(input: string): string | null {
   const s = (input || "").trim();

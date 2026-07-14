@@ -165,6 +165,30 @@ app.post("/youtube/publish", async (req, res) => {
   }
 });
 
+/**
+ * Cancel a scheduled release (Studio "Cancel" button). Clears the YouTube
+ * publishAt and pins the video Private so it will not auto-publish.
+ * Body: { video_id | url }
+ */
+app.post("/youtube/unschedule", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!youtube.isConfigured()) {
+    return res.status(503).json({ error: "YouTube not configured (YT_* env missing)" });
+  }
+  const { video_id, url } = req.body ?? {};
+  const id = youtube.parseVideoId(String(video_id || url || ""));
+  if (!id) return res.status(400).json({ error: "video_id or url (a valid YouTube link) required" });
+  try {
+    await youtube.unschedule(id);
+    console.log(`[youtube] unscheduled ${id} (now private, publishAt cleared)`);
+    res.json({ ok: true, video_id: id, url: `https://youtu.be/${id}` });
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || String(err);
+    console.error("[youtube/unschedule] failed", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 app.post("/render", async (req, res) => {
   if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
 
