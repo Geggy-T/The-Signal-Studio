@@ -53,7 +53,7 @@ export const RenderSpecSchema = z.object({
       accent: z.string().default("#F5A623"),
       text: z.string().default("#FFFFFF"),
       muted: z.string().default("#8A9099"),
-      channel_name: z.string().default("The Signal"),
+      channel_name: z.string().default("nibs"),
     })
     .default({}),
 

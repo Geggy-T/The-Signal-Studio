@@ -17,6 +17,20 @@ const MATT_VOLUME = 0.8; // Matt's VO level in the mix (raised ~15% from 0.7)
 const FONT = "'Space Grotesk', system-ui, sans-serif";
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
+/** The nibs pen-nib mark: sharp point (gets to the point) + concentrated essence. */
+const NibMark: React.FC<{ color: string; size?: number }> = ({ color, size = 30 }) => (
+  <svg
+    width={size * 0.62}
+    height={size}
+    viewBox="0 0 120 172"
+    style={{ display: "inline-block", verticalAlign: "middle", marginRight: 8 }}
+  >
+    <path d="M16,46 C16,20 30,10 60,10 C90,10 104,20 104,46 L60,172 Z" fill={color} />
+    <circle cx="60" cy="66" r="9" fill="#0f1113" />
+    <path d="M60,77 L60,150" stroke="#0f1113" strokeWidth="9" strokeLinecap="round" />
+  </svg>
+);
+
 const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
   <div
     style={{
@@ -24,14 +38,17 @@ const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
       top: 60,
       left: 60,
       color: spec.brand.text,
-      opacity: 0.55,
+      opacity: 0.6,
       fontSize: 30,
       fontWeight: 700,
       letterSpacing: 1,
       fontFamily: FONT,
+      display: "flex",
+      alignItems: "center",
     }}
   >
-    <span style={{ color: spec.brand.accent }}>▍</span> {spec.brand.channel_name}
+    <NibMark color={spec.brand.accent} size={30} />
+    {spec.brand.channel_name}
   </div>
 );
 
@@ -131,7 +148,25 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
     (w) => w.end > spec.t_in + startSec && w.start < spec.t_in + endSec
   );
   return (
-    <AbsoluteFill style={{ background: GRADIENT(spec.brand.bg) }}>
+    <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
+      {/* Blurred, darkened copy fills the frame so the 16:9 clip never sits in black
+          bars. Muted (the sharp copy carries the audio); same src+time so it shares
+          decode with the sharp copy. */}
+      <OffthreadVideo
+        src={spec.source_url}
+        startFrom={s(spec.t_in + startSec)}
+        endAt={s(spec.t_in + endSec)}
+        muted
+        volume={0}
+        style={{
+          position: "absolute",
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: "scale(1.15)",
+          filter: "blur(22px) brightness(0.5)",
+        }}
+      />
       <OffthreadVideo
         src={spec.source_url}
         startFrom={s(spec.t_in + startSec)}
@@ -179,6 +214,22 @@ const MattInsert: React.FC<{
   const flashFontSize = flash.length <= 14 ? 132 : flash.length <= 26 ? 108 : flash.length <= 40 ? 86 : 70;
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
+      {/* Blurred fill so the frozen frame never sits in black bars. */}
+      <Freeze frame={s(freezeSec)}>
+        <OffthreadVideo
+          src={spec.source_url}
+          muted
+          volume={0}
+          style={{
+            position: "absolute",
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            transform: "scale(1.15)",
+            filter: "blur(22px) brightness(0.5)",
+          }}
+        />
+      </Freeze>
       {/* Frozen source frame behind Matt */}
       <Freeze frame={s(freezeSec)}>
         <OffthreadVideo
@@ -291,7 +342,7 @@ const TakeawayCard: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
             marginBottom: 40,
           }}
         >
-          The read
+          The nib
         </div>
         <div style={{ color: spec.brand.text, fontSize: 74, lineHeight: 1.15, fontWeight: 700 }}>
           {deAI(spec.title)}
