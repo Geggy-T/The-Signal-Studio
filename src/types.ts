@@ -40,6 +40,9 @@ export const RenderSpecSchema = z.object({
 
   // On-screen copy.
   title: z.string().default(""),
+  // Short packaging HEADLINE (3-6 words) shown huge on the opening frame and baked
+  // into the custom thumbnail. Falls back to the first words of the hook if empty.
+  headline: z.string().default(""),
   hook_text: z.string().default(""),
   takeaway_text: z.string().default("Noise off."),
 

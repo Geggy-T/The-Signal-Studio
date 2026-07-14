@@ -119,31 +119,28 @@ function getServeUrl(): Promise<string> {
 }
 
 /**
- * Choose a thumbnail frame from real source footage instead of the naive midpoint,
- * which often lands on one of Matt's dark commentary/takeaway cards. We pick a frame
- * ~40% into the LONGEST source segment (the main content beat), so the thumbnail shows
- * the actual video. Falls back to the midpoint if the timeline can't be read.
+ * Choose a good SOURCE frame time (absolute source seconds) for the custom thumbnail:
+ * the midpoint of the longest source segment, so the thumbnail shows real footage, not
+ * one of Matt's dark cards. Returns t_in-inclusive seconds so it works whether the
+ * source was pre-cut (t_in rebased to 0) or a remote file. Falls back to clip midpoint.
  */
-function pickThumbnailFrame(spec: RenderSpec, totalFrames: number): number {
+function pickThumbnailSourceSec(spec: RenderSpec): number {
   try {
     const { items } = buildTimeline(spec);
-    let cursorFrames = 0;
-    let best = { startFrame: 0, frames: 0 };
+    let best = { mid: -1, len: 0 };
     for (const it of items) {
-      const frames = Math.max(1, Math.round(it.durSec * FPS));
-      if (it.kind === "source" && frames > best.frames) {
-        best = { startFrame: cursorFrames, frames };
+      const len = it.durSec ?? 0;
+      if (it.kind === "source" && len > best.len) {
+        const startSec = it.startSec ?? 0;
+        const endSec = it.endSec ?? startSec + len;
+        best = { mid: (startSec + endSec) / 2, len };
       }
-      cursorFrames += frames;
     }
-    if (best.frames > 0) {
-      const f = best.startFrame + Math.floor(best.frames * 0.4);
-      return Math.min(Math.max(0, f), Math.max(0, totalFrames - 1));
-    }
+    if (best.mid >= 0) return spec.t_in + best.mid;
   } catch (e) {
-    console.warn("[render] thumbnail frame pick failed, using midpoint:", (e as Error).message);
+    console.warn("[render] thumbnail source-sec pick failed:", (e as Error).message);
   }
-  return Math.floor(totalFrames * 0.5);
+  return spec.t_in + Math.max(0, (spec.t_out - spec.t_in) / 2);
 }
 
 export interface RenderResult {
@@ -223,14 +220,22 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     },
   });
 
+  // Custom thumbnail: a dedicated bright frame + baked-in headline (its own comp).
+  const thumbProps = { spec, thumbSec: pickThumbnailSourceSec(spec) };
+  const thumbComposition = await selectComposition({
+    serveUrl,
+    id: "Thumbnail",
+    inputProps: thumbProps,
+    chromiumOptions,
+    timeoutInMilliseconds: FRAME_TIMEOUT,
+  });
   await renderStill({
-    composition,
+    composition: thumbComposition,
     serveUrl,
     output: thumbFile,
-    frame: pickThumbnailFrame(spec, composition.durationInFrames),
-    inputProps,
+    frame: 0,
+    inputProps: thumbProps,
     imageFormat: "jpeg",
-    scale,
     offthreadVideoCacheSizeInBytes,
     chromiumOptions,
     timeoutInMilliseconds: FRAME_TIMEOUT,
@@ -270,6 +275,16 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
         privacyStatus: spec.publish.privacy,
       });
       console.log(`[youtube] uploaded -> https://youtu.be/${youtube_video_id}`);
+      // Set the custom thumbnail (non-fatal: needs a verified channel).
+      try {
+        await youtube.setThumbnail(youtube_video_id, thumb);
+        console.log("[youtube] custom thumbnail set");
+      } catch (te) {
+        console.warn(
+          "[youtube] set thumbnail failed (channel may need verification):",
+          (te as Error)?.message || te
+        );
+      }
     } catch (e) {
       youtube_error = (e as Error)?.message || String(e);
       console.error("[youtube] upload failed:", youtube_error);

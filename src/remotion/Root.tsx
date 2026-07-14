@@ -1,6 +1,7 @@
 import React from "react";
 import { Composition } from "remotion";
 import { SignalClip } from "./SignalClip";
+import { ThumbnailStill } from "./Thumbnail";
 import {
   buildTimeline,
   FPS,
@@ -28,20 +29,31 @@ const defaultSpec: RenderSpec = RenderSpecSchema.parse({
 
 export const RemotionRoot: React.FC = () => {
   return (
-    <Composition
-      id="SignalClip"
-      component={SignalClip as React.FC<Record<string, unknown>>}
-      durationInFrames={FPS * (HOOK_SECONDS + 20 + TAKEAWAY_SECONDS)}
-      fps={FPS}
-      width={WIDTH}
-      height={HEIGHT}
-      defaultProps={{ spec: defaultSpec }}
-      // Duration is computed from the actual clip length at render time.
-      calculateMetadata={({ props }) => {
-        const spec = (props as { spec: RenderSpec }).spec;
-        const { totalSec } = buildTimeline(spec);
-        return { durationInFrames: Math.ceil(totalSec * FPS), fps: FPS, width: WIDTH, height: HEIGHT };
-      }}
-    />
+    <>
+      <Composition
+        id="SignalClip"
+        component={SignalClip as React.FC<Record<string, unknown>>}
+        durationInFrames={FPS * (HOOK_SECONDS + 20 + TAKEAWAY_SECONDS)}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={{ spec: defaultSpec }}
+        // Duration is computed from the actual clip length at render time.
+        calculateMetadata={({ props }) => {
+          const spec = (props as { spec: RenderSpec }).spec;
+          const { totalSec } = buildTimeline(spec);
+          return { durationInFrames: Math.ceil(totalSec * FPS), fps: FPS, width: WIDTH, height: HEIGHT };
+        }}
+      />
+      <Composition
+        id="Thumbnail"
+        component={ThumbnailStill as React.FC<Record<string, unknown>>}
+        durationInFrames={1}
+        fps={FPS}
+        width={WIDTH}
+        height={HEIGHT}
+        defaultProps={{ spec: defaultSpec, thumbSec: 3 }}
+      />
+    </>
   );
 };

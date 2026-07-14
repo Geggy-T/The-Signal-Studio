@@ -166,11 +166,17 @@ const MattInsert: React.FC<{
   const opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
   const clean = deAI(text);
   const FLASH_WORDS = 3;
-  const flash = isOpening ? firstWords(text, FLASH_WORDS) : "";
-  const body = isOpening ? restWords(text, FLASH_WORDS) : clean;
+  // Opening flash = the crafted packaging headline if we have one; otherwise fall
+  // back to the first few words of the spoken hook. With a real headline the whole
+  // hook line still shows below it.
+  const headline = deAI(spec.headline || "").trim();
+  const flash = isOpening ? headline || firstWords(text, FLASH_WORDS) : "";
+  const body = isOpening ? (headline ? clean : restWords(text, FLASH_WORDS)) : clean;
   // Punch-in for the opening flash: quick scale + fade over the first ~6 frames.
   const flashScale = interpolate(frame, [0, 6], [0.72, 1], { extrapolateRight: "clamp" });
   const flashOpacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
+  // Scale the headline down as it gets longer so a 6-word line still fits.
+  const flashFontSize = flash.length <= 14 ? 132 : flash.length <= 26 ? 108 : flash.length <= 40 ? 86 : 70;
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
       {/* Frozen source frame behind Matt */}
@@ -204,9 +210,9 @@ const MattInsert: React.FC<{
               textAlign: "center",
               color: spec.brand.accent,
               fontFamily: FONT,
-              fontSize: 132,
+              fontSize: flashFontSize,
               fontWeight: 800,
-              lineHeight: 1.02,
+              lineHeight: 1.04,
               letterSpacing: 1,
               textTransform: "uppercase",
               WebkitTextStroke: "2px rgba(0,0,0,0.5)",

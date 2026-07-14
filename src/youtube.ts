@@ -120,6 +120,27 @@ export async function uploadVideo(input: UploadInput): Promise<string> {
 }
 
 /**
+ * Set a custom thumbnail on a video. Requires the channel to be able to use custom
+ * thumbnails (usually phone-verified). Non-fatal for the caller if it fails.
+ */
+export async function setThumbnail(videoId: string, jpeg: Uint8Array): Promise<void> {
+  const accessToken = await getAccessToken();
+  const res = await fetch(
+    `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "image/jpeg" },
+      // Node's fetch accepts a Uint8Array/Buffer body at runtime.
+      body: jpeg as unknown as BodyInit,
+    },
+  );
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`YouTube thumbnails.set ${res.status}: ${t.slice(0, 300)}`);
+  }
+}
+
+/**
  * Change a video's privacy (used to flip Unlisted -> Public). We first read the
  * current status so the update preserves the other status fields — videos.update
  * resets any field of the "status" part that we omit.
