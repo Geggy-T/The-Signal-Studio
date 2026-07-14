@@ -241,18 +241,24 @@ export async function extractAudio(
 ): Promise<{ audioPath: string; workDir: string }> {
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "audio-"));
   const audioPath = path.join(workDir, "audio.mp3");
-  await run("ffmpeg", [
-    "-y",
-    "-i",
-    sourceUrl,
-    "-vn",
-    "-ac",
-    "1",
-    "-ar",
-    "16000",
-    "-b:a",
-    "32k",
-    audioPath,
-  ]);
+  // Groq's transcription cap is 25MB. We don't know the source duration here, so
+  // encode at 32k, and if the result is too big (long source) re-encode at a lower
+  // bitrate scaled from the measured size so it lands under ~22MB. 16-32k mono is
+  // plenty for ASR. Covers up to ~3.5h; longer would need chunking.
+  const TARGET = 22 * 1024 * 1024;
+  const encode = (kbps: number) =>
+    run("ffmpeg", [
+      "-y", "-i", sourceUrl, "-vn", "-ac", "1", "-ar", "16000", "-b:a", `${kbps}k`, audioPath,
+    ]);
+
+  await encode(32);
+  const size = (await fs.stat(audioPath)).size;
+  if (size > TARGET) {
+    const scaled = Math.max(16, Math.min(32, Math.floor(32 * (TARGET / size))));
+    if (scaled < 32) {
+      console.log(`[audio] ${(size / 1048576).toFixed(1)}MB at 32k too big; re-encoding at ${scaled}k`);
+      await encode(scaled);
+    }
+  }
   return { audioPath, workDir };
 }
