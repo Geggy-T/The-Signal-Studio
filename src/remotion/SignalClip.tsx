@@ -107,7 +107,7 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "center",
-          gap: "6px 16px",
+          gap: "8px 10px",
           maxWidth: "90%",
           padding: "20px 30px",
           borderRadius: 22,
@@ -122,12 +122,17 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
               key={`${w.start}-${i}`}
               style={{
                 display: "inline-block",
+                // Per-word horizontal padding reserves the room the active word's
+                // scale transform needs, so the "pop" can never overflow into its
+                // neighbours (transforms don't affect flex layout on their own).
+                padding: "0 7px",
                 fontSize: 66,
                 fontWeight: 800,
                 lineHeight: 1.12,
                 color: isActive ? spec.brand.accent : spec.brand.text,
-                // Active word "pops" — the karaoke energy viral clip captions use.
-                transform: isActive ? "scale(1.16)" : "none",
+                // Subtle pop — small enough to stay inside the padding + gap budget.
+                transform: isActive ? "scale(1.08)" : "none",
+                transformOrigin: "center",
                 WebkitTextStroke: "1.5px rgba(0,0,0,0.6)",
                 textShadow: "0 3px 12px rgba(0,0,0,0.95)",
               }}
