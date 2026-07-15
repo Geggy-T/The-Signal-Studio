@@ -20,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final49-pulse";
+const BUILD = "final50-ytstatus";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -211,6 +211,30 @@ app.post("/youtube/unschedule", async (req, res) => {
   } catch (err: unknown) {
     const msg = (err as Error)?.message || String(err);
     console.error("[youtube/unschedule] failed", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * Read real YouTube status for a set of videos (privacy + scheduled publishAt), so the
+ * Studio can resync its Scheduled list with changes made directly on YouTube.
+ * Body: { video_ids: string[] }  ->  { statuses: [{id, privacyStatus, publishAt}], requested }
+ * A requested id absent from `statuses` means that video was deleted / is inaccessible.
+ */
+app.post("/youtube/status", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!youtube.isConfigured()) {
+    return res.status(503).json({ error: "YouTube not configured (YT_* env missing)" });
+  }
+  const raw = (req.body?.video_ids ?? []) as unknown[];
+  const ids = Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: "video_ids[] required" });
+  try {
+    const statuses = await youtube.getVideoStatuses(ids);
+    res.json({ statuses, requested: ids.length });
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || String(err);
+    console.error("[youtube/status] failed", msg);
     res.status(500).json({ error: msg });
   }
 });

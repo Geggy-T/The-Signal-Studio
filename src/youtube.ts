@@ -233,6 +233,48 @@ export async function unschedule(videoId: string): Promise<void> {
   }
 }
 
+export interface VideoStatus {
+  id: string;
+  privacyStatus: string; // "public" | "private" | "unlisted"
+  publishAt: string | null; // ISO scheduled release time, if set
+}
+
+/**
+ * Read the real status of videos from YouTube (privacy + scheduled publishAt), so the
+ * Studio can reconcile its Scheduled list with changes made directly on YouTube.
+ * Batches up to 50 ids per call. Videos NOT returned were deleted / are inaccessible —
+ * the caller detects a deletion by a requested id being absent from the result.
+ */
+export async function getVideoStatuses(videoIds: string[]): Promise<VideoStatus[]> {
+  const ids = videoIds.filter(Boolean);
+  if (!ids.length) return [];
+  const accessToken = await getAccessToken();
+  const out: VideoStatus[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await fetch(
+      `${VIDEOS_URL}?part=status&id=${batch.map(encodeURIComponent).join(",")}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`YouTube videos.list ${res.status}: ${t.slice(0, 300)}`);
+    }
+    const json = (await res.json()) as {
+      items?: Array<{ id?: string; status?: { privacyStatus?: string; publishAt?: string } }>;
+    };
+    for (const it of json.items ?? []) {
+      if (!it.id) continue;
+      out.push({
+        id: it.id,
+        privacyStatus: it.status?.privacyStatus ?? "unknown",
+        publishAt: it.status?.publishAt ?? null,
+      });
+    }
+  }
+  return out;
+}
+
 /** Parse a YouTube video id from a full URL or return the raw id if already one. */
 export function parseVideoId(input: string): string | null {
   const s = (input || "").trim();
