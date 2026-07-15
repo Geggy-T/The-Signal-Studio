@@ -3,6 +3,7 @@ import express from "express";
 import { RenderSpecSchema } from "./types.js";
 import { renderClip } from "./render.js";
 import { downloadUrl, extractAudio, discover } from "./download.js";
+import { pulse } from "./pulse.js";
 import { putToSignedUrl } from "./supabase.js";
 import { SERVE_DIR } from "./serve.js";
 import * as youtube from "./youtube.js";
@@ -19,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final48-audiofit3";
+const BUILD = "final49-pulse";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -30,6 +31,24 @@ function authed(req: express.Request): boolean {
 app.get("/health", (_req, res) =>
   res.json({ ok: true, service: "signal-render-worker", build: BUILD, audio_sizecheck: true })
 );
+
+/**
+ * Pulse — the demand signal for discovery v2. Returns momentum-ranked AI/tech stories
+ * surging right now (Hacker News + AI news RSS). Body: { since_hours? } (default 72).
+ * The Studio clusters + scores these and turns the hot ones into YouTube clip searches.
+ */
+app.post("/pulse", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  try {
+    const sinceHours = Number(req.body?.since_hours) || 72;
+    const items = await pulse(sinceHours);
+    res.json({ items, count: items.length });
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || String(err);
+    console.error("[pulse] failed", msg);
+    res.status(500).json({ error: msg });
+  }
+});
 
 /**
  * Local-download queue. The Studio enqueues web-video (YouTube etc.) downloads here;
