@@ -93,7 +93,7 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
     <div
       style={{
         position: "absolute",
-        bottom: "11%",
+        bottom: "20%",
         left: 0,
         right: 0,
         display: "flex",
@@ -121,12 +121,15 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
             <span
               key={`${w.start}-${i}`}
               style={{
-                fontSize: 62,
+                display: "inline-block",
+                fontSize: 66,
                 fontWeight: 800,
                 lineHeight: 1.12,
                 color: isActive ? spec.brand.accent : spec.brand.text,
-                WebkitTextStroke: "1px rgba(0,0,0,0.55)",
-                textShadow: "0 2px 10px rgba(0,0,0,0.9)",
+                // Active word "pops" — the karaoke energy viral clip captions use.
+                transform: isActive ? "scale(1.16)" : "none",
+                WebkitTextStroke: "1.5px rgba(0,0,0,0.6)",
+                textShadow: "0 3px 12px rgba(0,0,0,0.95)",
               }}
             >
               {text}
