@@ -222,9 +222,12 @@ const MattInsert: React.FC<{
   const headline = deAI(spec.headline || "").trim();
   const flash = isOpening ? headline || firstWords(text, FLASH_WORDS) : "";
   const body = isOpening ? (headline ? clean : restWords(text, FLASH_WORDS)) : clean;
-  // Punch-in for the opening flash: quick scale + fade over the first ~6 frames.
-  const flashScale = interpolate(frame, [0, 6], [0.72, 1], { extrapolateRight: "clamp" });
-  const flashOpacity = interpolate(frame, [0, 5], [0, 1], { extrapolateRight: "clamp" });
+  // Frame-0 hook: the opening headline is FULLY VISIBLE on the literal first frame
+  // (no fade) — in the swipe feed that first frame is the de-facto thumbnail, so it
+  // must never be blank. A subtle scale punch (0.9->1) adds energy while staying
+  // legible from frame 0.
+  const flashScale = interpolate(frame, [0, 6], [0.9, 1], { extrapolateRight: "clamp" });
+  const flashOpacity = 1;
   // Scale the headline down as it gets longer so a 6-word line still fits.
   const flashFontSize = flash.length <= 14 ? 132 : flash.length <= 26 ? 108 : flash.length <= 40 ? 86 : 70;
   return (
