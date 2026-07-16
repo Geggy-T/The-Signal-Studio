@@ -20,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final60-concurrency";
+const BUILD = "final61-multicore";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -29,12 +29,14 @@ function authed(req: express.Request): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Render concurrency gate. Each 1080p Remotion render spawns a compositor + a
-// browser + ffmpeg and uses ~2GB. Firing all of a batch at once exhausts memory
-// and PIDs (spawn EAGAIN) and CRASHES the worker, so nothing finishes. We cap how
-// many render at once; the rest queue and run as slots free up. Tune with
-// RENDER_CONCURRENCY (default 2, safe for an 8GB instance).
-const MAX_RENDERS = Math.max(1, Number(process.env.RENDER_CONCURRENCY || 2));
+// Render concurrency gate — how many WHOLE clips render at once. Each 1080p render
+// now uses several CPU cores internally (REMOTION_CONCURRENCY in render.ts), so we
+// serialise clips by default (1 at a time): this keeps peak memory bounded AND still
+// renders each clip fast across cores, and it finishes each clip sooner (so its signed
+// URLs are less likely to expire while it waits). Firing a whole batch at once exhausts
+// memory/PIDs (spawn EAGAIN) and crashes the worker. Raise RENDER_CONCURRENCY only if
+// you add a lot of RAM (and then also lower REMOTION_CONCURRENCY to match).
+const MAX_RENDERS = Math.max(1, Number(process.env.RENDER_CONCURRENCY || 1));
 let activeRenders = 0;
 const renderWaiters: Array<() => void> = [];
 function acquireRenderSlot(): Promise<void> {

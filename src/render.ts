@@ -187,9 +187,13 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   // Software rendering (Railway has no GPU) + generous per-frame timeout.
   const chromiumOptions = { gl: "swiftshader" as const };
   const FRAME_TIMEOUT = 120_000;
-  // Cap concurrency so a small container doesn't thrash / OOM. Default 1 (safest on
-  // small Railway containers); raise via RENDER_CONCURRENCY if you give it more RAM.
-  const concurrency = Number(process.env.RENDER_CONCURRENCY || 1);
+  // Remotion's PER-RENDER frame concurrency: how many frames render in parallel across
+  // CPU cores WITHIN a single clip. This is SEPARATE from the worker's render-level gate
+  // (RENDER_CONCURRENCY in index.ts, which limits how many whole clips render at once).
+  // Because the gate serialises clips, each clip can safely use several cores — this is
+  // what turns a ~16min single-core render into a few minutes. Default 4; drop to 2 if
+  // you see OOM, raise if you add RAM.
+  const concurrency = Number(process.env.REMOTION_CONCURRENCY || 4);
   // Render at 2/3 scale so 1080x1920 becomes 720x1280 — far less encoder memory,
   // layout/fonts stay proportional automatically. Set RENDER_SCALE=1 once you add RAM.
   const scale = Number(process.env.RENDER_SCALE || 2 / 3);
