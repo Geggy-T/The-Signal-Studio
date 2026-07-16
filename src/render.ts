@@ -61,8 +61,23 @@ async function precutSource(spec: RenderSpec): Promise<string | null> {
     "veryfast",
     "-crf",
     "20",
+    // Force even dimensions + a standard pixel format so libx264 never rejects an
+    // odd-sized or exotic source (the "incorrect parameters ... width or height" error).
+    "-vf",
+    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+    "-pix_fmt",
+    "yuv420p",
+    // Re-encode audio to AAC with explicit, safe params so Opus sources (which the
+    // bare 'aac' encoder was choking on) convert cleanly instead of failing the
+    // whole pre-cut and forcing the heavier remote-source fallback.
     "-c:a",
     "aac",
+    "-ar",
+    "44100",
+    "-ac",
+    "2",
+    "-b:a",
+    "160k",
     "-movflags",
     "+faststart",
     cutPath,

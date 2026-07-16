@@ -20,12 +20,37 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final59-bigtitle";
+const BUILD = "final60-concurrency";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
   const h = req.header("authorization") || "";
   return h === `Bearer ${WORKER_SECRET}`;
+}
+
+// ---------------------------------------------------------------------------
+// Render concurrency gate. Each 1080p Remotion render spawns a compositor + a
+// browser + ffmpeg and uses ~2GB. Firing all of a batch at once exhausts memory
+// and PIDs (spawn EAGAIN) and CRASHES the worker, so nothing finishes. We cap how
+// many render at once; the rest queue and run as slots free up. Tune with
+// RENDER_CONCURRENCY (default 2, safe for an 8GB instance).
+const MAX_RENDERS = Math.max(1, Number(process.env.RENDER_CONCURRENCY || 2));
+let activeRenders = 0;
+const renderWaiters: Array<() => void> = [];
+function acquireRenderSlot(): Promise<void> {
+  if (activeRenders < MAX_RENDERS) {
+    activeRenders++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => renderWaiters.push(resolve));
+}
+function releaseRenderSlot(): void {
+  const next = renderWaiters.shift();
+  if (next) {
+    next(); // hand this slot straight to the next waiter (activeRenders unchanged)
+  } else {
+    activeRenders = Math.max(0, activeRenders - 1);
+  }
 }
 
 app.get("/health", (_req, res) =>
@@ -248,36 +273,46 @@ app.post("/render", async (req, res) => {
   }
   const spec = parsed.data;
 
-  // Async mode: ack immediately, POST result to callback_url when done.
+  // Async mode: ack immediately, POST result to callback_url when done. The render
+  // itself waits for a concurrency slot so a big batch can't crash the worker.
   if (spec.callback_url) {
     res.status(202).json({ status: "accepted", clip_candidate_id: spec.clip_candidate_id });
-    const started = Date.now();
-    console.log(`[render] START ${spec.clip_candidate_id} → callback ${spec.callback_url}`);
-    renderClip(spec)
-      .then((result) => {
-        console.log(
-          `[render] DONE ${spec.clip_candidate_id} in ${((Date.now() - started) / 1000).toFixed(1)}s (${result.bytes} bytes)`
-        );
-        return postCallback(spec.callback_url!, { status: "done", ...result });
-      })
-      .catch((err) => {
-        console.error(`[render] FAILED ${spec.clip_candidate_id}:`, err?.stack || err);
-        return postCallback(spec.callback_url!, {
-          status: "failed",
-          clip_candidate_id: spec.clip_candidate_id,
-          error: String(err?.message || err),
-        });
-      });
+    console.log(
+      `[render] QUEUED ${spec.clip_candidate_id} (active=${activeRenders}, waiting=${renderWaiters.length})`
+    );
+    acquireRenderSlot().then(() => {
+      const started = Date.now();
+      console.log(`[render] START ${spec.clip_candidate_id} → callback ${spec.callback_url}`);
+      return renderClip(spec)
+        .then((result) => {
+          console.log(
+            `[render] DONE ${spec.clip_candidate_id} in ${((Date.now() - started) / 1000).toFixed(1)}s (${result.bytes} bytes)`
+          );
+          return postCallback(spec.callback_url!, { status: "done", ...result });
+        })
+        .catch((err) => {
+          console.error(`[render] FAILED ${spec.clip_candidate_id}:`, err?.stack || err);
+          return postCallback(spec.callback_url!, {
+            status: "failed",
+            clip_candidate_id: spec.clip_candidate_id,
+            error: String(err?.message || err),
+          });
+        })
+        .finally(() => releaseRenderSlot());
+    });
     return;
   }
 
-  // Sync mode: render and return (fine for single-user Phase 0).
+  // Sync mode: render and return (fine for single-user Phase 0). Also gated.
+  await acquireRenderSlot();
   try {
     const result = await renderClip(spec);
     res.json({ status: "done", ...result });
   } catch (err: unknown) {
     console.error("[render] failed", err);
     res.status(500).json({ status: "failed", error: String((err as Error)?.message || err) });
+  } finally {
+    releaseRenderSlot();
   }
 });
 
