@@ -40,23 +40,24 @@ const LogoBug: React.FC<{ spec: RenderSpec }> = () => (
   />
 );
 
-/** Persistent headline pinned to the top band for the whole clip (after the opening
- *  flash). Fills the otherwise-blank top third and keeps the story's frame in view
- *  the entire time. Scales down as the headline gets longer so it always fits ~2 lines. */
+/** Persistent headline kept in the upper third for the WHOLE clip — the SAME large
+ *  title as the opening flash (identical size/position/style), just static. Keeps the
+ *  story's frame in view the entire time. Font size mirrors the opening flash exactly. */
+const headlineFontSize = (h: string) =>
+  h.length <= 14 ? 132 : h.length <= 26 ? 108 : h.length <= 40 ? 86 : 70;
 const HeadlineBar: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
   const headline = deAI(spec.headline || spec.title || "").trim();
   if (!headline) return null;
-  const size = headline.length <= 16 ? 60 : headline.length <= 28 ? 50 : headline.length <= 42 ? 42 : 36;
   return (
     <div
       style={{
         position: "absolute",
-        top: 96,
+        top: "13%",
         left: 0,
         right: 0,
         display: "flex",
         justifyContent: "center",
-        padding: "0 54px",
+        padding: "0 56px",
         pointerEvents: "none",
       }}
     >
@@ -65,13 +66,13 @@ const HeadlineBar: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
           textAlign: "center",
           color: spec.brand.accent,
           fontFamily: FONT,
-          fontSize: size,
+          fontSize: headlineFontSize(headline),
           fontWeight: 800,
-          lineHeight: 1.06,
+          lineHeight: 1.04,
           letterSpacing: 1,
           textTransform: "uppercase",
-          WebkitTextStroke: "1.5px rgba(0,0,0,0.55)",
-          textShadow: "0 3px 16px rgba(0,0,0,0.92)",
+          WebkitTextStroke: "2px rgba(0,0,0,0.5)",
+          textShadow: "0 4px 20px rgba(0,0,0,0.9)",
         }}
       >
         {headline}
