@@ -200,32 +200,38 @@ function snapClipEnd(spec: RenderSpec, cursor: number): number {
   const words = spec.captions;
   if (!words.length) return C;
   const absEnd = spec.t_in + C; // = t_out (absolute source seconds)
-  const LOOKBACK = 6;
-  const TAIL = 0.4; // breath so the speaker's final word fully lands before the takeaway
+  // Generous lookback: the clip end often lands deep inside an unfinished sentence,
+  // and the last COMPLETED sentence can be 10s+ earlier. The old 6s window missed it,
+  // fell through to "last word before t_out", and rolled into the next, half-spoken
+  // sentence before the takeaway (the "So GPT…" flash). We would rather end the clip
+  // a little early on a clean sentence than roll into an unfinished one.
+  const LOOKBACK = 16;
+  const MAX_TAIL = 0.3; // small breath after the period
   const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
 
-  // 1) Best: end just after a completed sentence within the lookback window.
-  let sentenceEnd = -1;
-  for (const w of words) {
-    if (w.end > absEnd) break;
-    if (w.end >= absEnd - LOOKBACK && endsSentence(w.text)) sentenceEnd = w.end;
+  // Best: the LAST completed sentence end at/before t_out, within the lookback.
+  let seIdx = -1;
+  for (let k = 0; k < words.length; k++) {
+    if (words[k].end > absEnd) break;
+    if (words[k].end >= absEnd - LOOKBACK && endsSentence(words[k].text)) seIdx = k;
   }
-  if (sentenceEnd > 0) {
-    const rel = Math.min(C, sentenceEnd - spec.t_in + TAIL);
-    if (rel > cursor + 1.5) return rel; // keep the final speaker segment a sensible length
+  if (seIdx >= 0) {
+    const se = words[seIdx].end;
+    // The tail must NEVER reach the next word — otherwise the following sentence's
+    // first word(s) flash on screen before we cut. That is exactly the artifact here.
+    const nextStart = words[seIdx + 1]?.start ?? se + MAX_TAIL;
+    const tail = Math.min(MAX_TAIL, Math.max(0, nextStart - se - 0.05));
+    return Math.min(C, se - spec.t_in + tail);
   }
 
-  // 2) Otherwise NEVER cut mid-word: end just after the last COMPLETE word at/before
-  //    t_out (plus a breath), so the speaker's closing word or two are never clipped.
+  // No punctuation in range (rare): end just after the last COMPLETE word (never
+  // mid-word), with a minimal breath. Best we can do without sentence boundaries.
   let lastWordEnd = -1;
   for (const w of words) {
     if (w.end > absEnd) break;
     lastWordEnd = w.end;
   }
-  if (lastWordEnd > 0) {
-    const rel = Math.min(C, lastWordEnd - spec.t_in + TAIL);
-    if (rel > cursor + 1) return rel;
-  }
+  if (lastWordEnd > 0) return Math.min(C, lastWordEnd - spec.t_in + 0.2);
   return C;
 }
 
@@ -335,7 +341,12 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   }
   if (cursor < C - 0.05) {
     const endSec = snapClipEnd(spec, cursor);
-    items.push({ kind: "source", startSec: cursor, endSec, durSec: endSec - cursor });
+    // Only render a trailing speaker run if it is a sensible length ending on a clean
+    // sentence. If the clean end lands at/near the last take, cut straight to the
+    // takeaway rather than flash a fraction of a rolled/unfinished sentence.
+    if (endSec > cursor + 1.0) {
+      items.push({ kind: "source", startSec: cursor, endSec, durSec: endSec - cursor });
+    }
   }
   items.push({ kind: "takeaway", durSec: takeawayLen });
 

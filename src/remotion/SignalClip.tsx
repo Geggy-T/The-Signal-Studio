@@ -3,6 +3,7 @@ import {
   AbsoluteFill,
   Audio,
   Freeze,
+  Img,
   interpolate,
   OffthreadVideo,
   Sequence,
@@ -23,40 +24,61 @@ const SFX_VOLUME = 0.45; // subtle whoosh+click on each cut, under Matt's VO
 const FONT = "'Space Grotesk', system-ui, sans-serif";
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
-/** The nibs pen-nib mark: sharp point (gets to the point) + concentrated essence. */
-const NibMark: React.FC<{ color: string; size?: number }> = ({ color, size = 30 }) => (
-  <svg
-    width={size * 0.62}
-    height={size}
-    viewBox="0 0 120 172"
-    style={{ display: "inline-block", verticalAlign: "middle", marginRight: 8 }}
-  >
-    <path d="M16,46 C16,20 30,10 60,10 C90,10 104,20 104,46 L60,172 Z" fill={color} />
-    <circle cx="60" cy="66" r="9" fill="#0f1113" />
-    <path d="M60,77 L60,150" stroke="#0f1113" strokeWidth="9" strokeLinecap="round" />
-  </svg>
-);
-
-const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
-  <div
+// Channel logo (top-left, every frame). The coral "i" mark ships as public/logo.png
+// and is loaded via staticFile. Logo-only — no wordmark.
+const LOGO_SRC = staticFile("logo.png");
+const LogoBug: React.FC<{ spec: RenderSpec }> = () => (
+  <Img
+    src={LOGO_SRC}
     style={{
       position: "absolute",
-      top: 60,
-      left: 60,
-      color: spec.brand.text,
-      opacity: 0.6,
-      fontSize: 30,
-      fontWeight: 700,
-      letterSpacing: 1,
-      fontFamily: FONT,
-      display: "flex",
-      alignItems: "center",
+      top: 52,
+      left: 56,
+      height: 72,
+      width: "auto",
     }}
-  >
-    <NibMark color={spec.brand.text} size={30} />
-    {spec.brand.channel_name}
-  </div>
+  />
 );
+
+/** Persistent headline pinned to the top band for the whole clip (after the opening
+ *  flash). Fills the otherwise-blank top third and keeps the story's frame in view
+ *  the entire time. Scales down as the headline gets longer so it always fits ~2 lines. */
+const HeadlineBar: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
+  const headline = deAI(spec.headline || spec.title || "").trim();
+  if (!headline) return null;
+  const size = headline.length <= 16 ? 60 : headline.length <= 28 ? 50 : headline.length <= 42 ? 42 : 36;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 96,
+        left: 0,
+        right: 0,
+        display: "flex",
+        justifyContent: "center",
+        padding: "0 54px",
+        pointerEvents: "none",
+      }}
+    >
+      <div
+        style={{
+          textAlign: "center",
+          color: spec.brand.accent,
+          fontFamily: FONT,
+          fontSize: size,
+          fontWeight: 800,
+          lineHeight: 1.06,
+          letterSpacing: 1,
+          textTransform: "uppercase",
+          WebkitTextStroke: "1.5px rgba(0,0,0,0.55)",
+          textShadow: "0 3px 16px rgba(0,0,0,0.92)",
+        }}
+      >
+        {headline}
+      </div>
+    </div>
+  );
+};
 
 type Chunk = { start: number; end: number; words: Word[] };
 
@@ -212,6 +234,7 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
         }}
       />
       <Captions words={words} clipStart={spec.t_in + startSec} spec={spec} />
+      <HeadlineBar spec={spec} />
       <LogoBug spec={spec} />
     </AbsoluteFill>
   );
@@ -304,6 +327,9 @@ const MattInsert: React.FC<{
       </Freeze>
       {/* Dim so it's clear we've cut to commentary */}
       <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.62)" }} />
+      {/* Keep the pinned headline up top on Matt's takes too (but not the opening,
+          which shows the big animated flash instead). */}
+      {isOpening ? null : <HeadlineBar spec={spec} />}
       <LogoBug spec={spec} />
       {flash ? (
         <div
