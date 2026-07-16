@@ -112,6 +112,8 @@ function getServeUrl(): Promise<string> {
         entryPoint: path.join(process.cwd(), "src/remotion/index.ts"),
         // Load Space Grotesk for the branded look.
         webpackOverride: (c) => c,
+        // Bundle the SFX (public/cut.mp3) so staticFile() resolves in the render.
+        publicDir: path.join(process.cwd(), "public"),
       });
     })();
   }

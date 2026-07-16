@@ -7,13 +7,19 @@ import {
   OffthreadVideo,
   Sequence,
   Series,
+  staticFile,
   useCurrentFrame,
 } from "remotion";
 import type { RenderSpec, Word } from "../types";
 import { FPS, buildTimeline, deAI, TAKEAWAY_LEAD_SECONDS } from "../types";
 
+// Whoosh+click bundled from public/cut.mp3 (staticFile is the render-safe path;
+// data URIs are not reliably supported for <Audio> by the renderer).
+const CUT_SFX = staticFile("cut.mp3");
+
 const s = (sec: number) => Math.round(sec * FPS);
 const MATT_VOLUME = 0.8; // Matt's VO level in the mix (raised ~15% from 0.7)
+const SFX_VOLUME = 0.45; // subtle whoosh+click on each cut, under Matt's VO
 const FONT = "'Space Grotesk', system-ui, sans-serif";
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
@@ -155,6 +161,11 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
   const words = spec.captions.filter(
     (w) => w.end > spec.t_in + startSec && w.start < spec.t_in + endSec
   );
+  // Slow continuous push-in (~0.6%/s, capped 6%). A talking-head source frame is
+  // near-static; this constant drift keeps the frame alive and fights mid-clip
+  // scroll-off. Resets each segment, so every cut gives a fresh motion beat.
+  const frame = useCurrentFrame();
+  const zoom = 1 + Math.min(0.06, (frame / FPS) * 0.006);
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
       {/* Blurred, darkened copy fills the frame so the 16:9 clip never sits in black
@@ -191,7 +202,14 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
         src={spec.source_url}
         startFrom={s(spec.t_in + startSec)}
         endAt={s(spec.t_in + endSec)}
-        style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain" }}
+        style={{
+          position: "absolute",
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          transform: `scale(${zoom})`,
+          transformOrigin: "center",
+        }}
       />
       <Captions words={words} clipStart={spec.t_in + startSec} spec={spec} />
       <LogoBug spec={spec} />
@@ -233,6 +251,9 @@ const MattInsert: React.FC<{
   // legible from frame 0.
   const flashScale = interpolate(frame, [0, 6], [0.9, 1], { extrapolateRight: "clamp" });
   const flashOpacity = 1;
+  // Slow push-in on the frozen frame so Matt's take never plays over a dead-still
+  // image (the #1 talking-head retention killer).
+  const zoom = 1 + Math.min(0.06, (frame / FPS) * 0.006);
   // Scale the headline down as it gets longer so a 6-word line still fits.
   const flashFontSize = flash.length <= 14 ? 132 : flash.length <= 26 ? 108 : flash.length <= 40 ? 86 : 70;
   return (
@@ -271,7 +292,14 @@ const MattInsert: React.FC<{
           src={spec.source_url}
           muted
           volume={0}
-          style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain" }}
+          style={{
+            position: "absolute",
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            transform: `scale(${zoom})`,
+            transformOrigin: "center",
+          }}
         />
       </Freeze>
       {/* Dim so it's clear we've cut to commentary */}
@@ -409,6 +437,8 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
             return (
               <Series.Sequence key={i} durationInFrames={frames}>
                 <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} isOpening={i === 0} />
+                {/* Whoosh+click at the cut to Matt — the "something happened" jolt. */}
+                <Audio src={CUT_SFX} volume={SFX_VOLUME} />
                 {it.url ? <Audio src={it.url} volume={MATT_VOLUME} /> : null}
               </Series.Sequence>
             );
