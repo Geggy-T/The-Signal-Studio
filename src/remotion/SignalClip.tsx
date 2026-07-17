@@ -11,6 +11,7 @@ import {
   staticFile,
   useCurrentFrame,
 } from "remotion";
+import { loadFont as loadBubbly } from "@remotion/google-fonts/Baloo2";
 import type { RenderSpec, Word } from "../types";
 import { FPS, buildTimeline, deAI, TAKEAWAY_LEAD_SECONDS } from "../types";
 
@@ -22,6 +23,9 @@ const s = (sec: number) => Math.round(sec * FPS);
 const MATT_VOLUME = 0.8; // Matt's VO level in the mix (raised ~15% from 0.7)
 const SFX_VOLUME = 0.45; // subtle whoosh+click on each cut, under Matt's VO
 const FONT = "'Space Grotesk', system-ui, sans-serif";
+const { fontFamily: BUBBLY_FONT } = loadBubbly();
+const fontOf = (spec: RenderSpec): string =>
+  spec.brand.font === "bubbly" ? BUBBLY_FONT : FONT;
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
 // Channel logo (top-left, every frame). The coral "i" mark ships as public/logo.png
@@ -65,7 +69,7 @@ const HeadlineBar: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
         style={{
           textAlign: "center",
           color: spec.brand.accent,
-          fontFamily: FONT,
+          fontFamily: fontOf(spec),
           fontSize: headlineFontSize(headline),
           fontWeight: 800,
           lineHeight: 1.04,
@@ -128,7 +132,7 @@ const Captions: React.FC<{ words: Word[]; clipStart: number; spec: RenderSpec }>
         display: "flex",
         justifyContent: "center",
         padding: "0 56px",
-        fontFamily: FONT,
+        fontFamily: fontOf(spec),
       }}
     >
       <div
@@ -350,7 +354,7 @@ const MattInsert: React.FC<{
               transform: `scale(${flashScale})`,
               textAlign: "center",
               color: spec.brand.accent,
-              fontFamily: FONT,
+              fontFamily: fontOf(spec),
               fontSize: flashFontSize,
               fontWeight: 800,
               lineHeight: 1.04,
@@ -371,7 +375,7 @@ const MattInsert: React.FC<{
           style={{
             textAlign: "center",
             maxWidth: 940,
-            fontFamily: FONT,
+            fontFamily: fontOf(spec),
             marginTop: isOpening ? 200 : 0,
           }}
         >
@@ -385,7 +389,7 @@ const MattInsert: React.FC<{
               marginBottom: 26,
             }}
           >
-            ▍ Matt
+            ▍ {spec.brand.host_name || "Matt"}
           </div>
           {body ? (
             <div
@@ -418,7 +422,7 @@ const TakeawayCard: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
         justifyContent: "center",
         alignItems: "center",
         padding: 110,
-        fontFamily: FONT,
+        fontFamily: fontOf(spec),
       }}
     >
       <div style={{ opacity, textAlign: "center", maxWidth: 900 }}>
@@ -432,7 +436,7 @@ const TakeawayCard: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
             marginBottom: 40,
           }}
         >
-          The nib
+          {(spec.brand.wordmark || spec.brand.channel_name || "").toString()}
         </div>
         <div style={{ color: spec.brand.text, fontSize: 74, lineHeight: 1.15, fontWeight: 700 }}>
           {deAI(spec.title)}

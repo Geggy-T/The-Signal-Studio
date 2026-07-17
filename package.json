@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.488",
+    "@remotion/google-fonts": "^4.0.488",
     "@remotion/renderer": "^4.0.488",
     "@supabase/supabase-js": "^2.45.0",
     "express": "^4.19.2",

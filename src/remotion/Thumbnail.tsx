@@ -3,7 +3,11 @@ import { AbsoluteFill, Freeze, OffthreadVideo } from "remotion";
 import type { RenderSpec } from "../types";
 import { FPS, deAI } from "../types";
 
+import { loadFont as loadBubbly } from "@remotion/google-fonts/Baloo2";
 const FONT = "'Space Grotesk', system-ui, sans-serif";
+const { fontFamily: BUBBLY_FONT } = loadBubbly();
+const fontOf = (spec: RenderSpec): string =>
+  spec.brand.font === "bubbly" ? BUBBLY_FONT : FONT;
 
 /**
  * Custom thumbnail for the channel grid + YouTube search/suggested: a bright, full
@@ -47,7 +51,7 @@ export const ThumbnailStill: React.FC<{ spec: RenderSpec; thumbSec: number }> = 
           fontSize: 36,
           fontWeight: 800,
           letterSpacing: 1,
-          fontFamily: FONT,
+          fontFamily: fontOf(spec),
           textShadow: "0 2px 12px rgba(0,0,0,0.9)",
         }}
       >
@@ -61,7 +65,7 @@ export const ThumbnailStill: React.FC<{ spec: RenderSpec; thumbSec: number }> = 
           style={{
             textAlign: "center",
             color: spec.brand.text,
-            fontFamily: FONT,
+            fontFamily: fontOf(spec),
             fontSize: size,
             fontWeight: 800,
             lineHeight: 1.05,

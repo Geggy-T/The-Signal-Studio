@@ -54,6 +54,9 @@ export const RenderSpecSchema = z.object({
       text: z.string().default("#FFFFFF"),
       muted: z.string().default("#8A9099"),
       channel_name: z.string().default("nibs"),
+      host_name: z.string().nullable().optional(),
+      wordmark: z.string().nullable().optional(),
+      font: z.string().nullable().optional(),
       // Per-channel logo (public URL). Rendered top-left every frame. Falls back to
       // the bundled public/logo.png when absent, so nibs keeps its coral "i" mark.
       logo_url: z.string().url().nullable().optional(),
