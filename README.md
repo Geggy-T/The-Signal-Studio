@@ -100,3 +100,19 @@ curl -X POST http://localhost:8080/render \
 - Captions render a 7-word window with the active word in amber; timings come straight from the Groq Whisper transcript.
 - One composition/template for now; the variation engine (multiple templates) lands in Phase 2.
 - Fonts: the brand look expects **Space Grotesk** — bundle it via `@remotion/google-fonts` if you want it embedded (falls back to system sans otherwise).
+
+## Multi-channel (final62-multicore)
+
+The worker is now channel-agnostic and fully backward compatible:
+
+- **Per-channel logo:** `spec.brand.logo_url` (optional, public URL) is rendered
+  top-left every frame. When absent it falls back to the bundled `public/logo.png`
+  (nibs' coral "i" mark), so nothing changes for nibs.
+- **Per-channel YouTube creds:** `spec.publish.credentials`
+  `{ client_id, client_secret, refresh_token, category_id? }` (optional) publishes to
+  THAT channel. When absent the worker falls back to its `YT_*` env (the nibs channel).
+  The same optional `credentials` object is accepted on the `/youtube/publish`,
+  `/youtube/unschedule`, and `/youtube/status` endpoints.
+
+The Studio reads these from the `channels` table and passes them per render job
+(wired in Phase 5). `YT_*` env stays set for nibs as the default fallback.
