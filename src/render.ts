@@ -285,7 +285,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   // the clip is already safely in Supabase; a YouTube hiccup is reported, not fatal.
   let youtube_video_id: string | undefined;
   let youtube_error: string | undefined;
-  if (spec.publish && youtube.isConfigured()) {
+  if (spec.publish && youtube.isConfigured(spec.publish.credentials)) {
     try {
       const scheduleAt =
         spec.publish.publish_at && Date.parse(spec.publish.publish_at) > Date.now()
@@ -303,11 +303,11 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
         tags: spec.publish.tags,
         privacyStatus: spec.publish.privacy,
         publishAt: scheduleAt,
-      });
+      }, spec.publish.credentials);
       console.log(`[youtube] uploaded -> https://youtu.be/${youtube_video_id}`);
       // Set the custom thumbnail (non-fatal: needs a verified channel).
       try {
-        await youtube.setThumbnail(youtube_video_id, thumb);
+        await youtube.setThumbnail(youtube_video_id, thumb, spec.publish.credentials);
         console.log("[youtube] custom thumbnail set");
       } catch (te) {
         console.warn(
@@ -319,7 +319,7 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
       youtube_error = (e as Error)?.message || String(e);
       console.error("[youtube] upload failed:", youtube_error);
     }
-  } else if (spec.publish && !youtube.isConfigured()) {
+  } else if (spec.publish && !youtube.isConfigured(spec.publish.credentials)) {
     console.log("[youtube] publish requested but YT_* env not set — skipping upload");
   }
 

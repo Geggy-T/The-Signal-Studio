@@ -54,6 +54,9 @@ export const RenderSpecSchema = z.object({
       text: z.string().default("#FFFFFF"),
       muted: z.string().default("#8A9099"),
       channel_name: z.string().default("nibs"),
+      // Per-channel logo (public URL). Rendered top-left every frame. Falls back to
+      // the bundled public/logo.png when absent, so nibs keeps its coral "i" mark.
+      logo_url: z.string().url().nullable().optional(),
     })
     .default({}),
 
@@ -83,6 +86,17 @@ export const RenderSpecSchema = z.object({
       // by itself at that instant and gets the normal fresh-publish Shorts push
       // (a manual private->public flip does not). Ignored if in the past.
       publish_at: z.string().nullable().optional(),
+      // Per-channel YouTube OAuth credentials. When present the worker publishes to
+      // THIS channel; when absent it falls back to the worker's YT_* env (nibs).
+      credentials: z
+        .object({
+          client_id: z.string(),
+          client_secret: z.string(),
+          refresh_token: z.string(),
+          category_id: z.string().nullable().optional(),
+        })
+        .nullable()
+        .optional(),
     })
     .nullable()
     .optional(),

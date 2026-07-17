@@ -20,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final61-multicore";
+const BUILD = "final62-multicore";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -200,15 +200,15 @@ app.post("/ingest-url", async (req, res) => {
  */
 app.post("/youtube/publish", async (req, res) => {
   if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
-  if (!youtube.isConfigured()) {
-    return res.status(503).json({ error: "YouTube not configured (YT_* env missing)" });
+  const { video_id, url, privacy, credentials } = req.body ?? {};
+  if (!youtube.isConfigured(credentials)) {
+    return res.status(503).json({ error: "YouTube not configured (no credentials and YT_* env missing)" });
   }
-  const { video_id, url, privacy } = req.body ?? {};
   const id = youtube.parseVideoId(String(video_id || url || ""));
   if (!id) return res.status(400).json({ error: "video_id or url (a valid YouTube link) required" });
   const target = (privacy as youtube.Privacy) || "public";
   try {
-    await youtube.setPrivacy(id, target);
+    await youtube.setPrivacy(id, target, credentials);
     console.log(`[youtube] set ${id} -> ${target}`);
     res.json({ ok: true, video_id: id, privacy: target, url: `https://youtu.be/${id}` });
   } catch (err: unknown) {
@@ -225,14 +225,14 @@ app.post("/youtube/publish", async (req, res) => {
  */
 app.post("/youtube/unschedule", async (req, res) => {
   if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
-  if (!youtube.isConfigured()) {
-    return res.status(503).json({ error: "YouTube not configured (YT_* env missing)" });
+  const { video_id, url, credentials } = req.body ?? {};
+  if (!youtube.isConfigured(credentials)) {
+    return res.status(503).json({ error: "YouTube not configured (no credentials and YT_* env missing)" });
   }
-  const { video_id, url } = req.body ?? {};
   const id = youtube.parseVideoId(String(video_id || url || ""));
   if (!id) return res.status(400).json({ error: "video_id or url (a valid YouTube link) required" });
   try {
-    await youtube.unschedule(id);
+    await youtube.unschedule(id, credentials);
     console.log(`[youtube] unscheduled ${id} (now private, publishAt cleared)`);
     res.json({ ok: true, video_id: id, url: `https://youtu.be/${id}` });
   } catch (err: unknown) {
@@ -250,14 +250,15 @@ app.post("/youtube/unschedule", async (req, res) => {
  */
 app.post("/youtube/status", async (req, res) => {
   if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
-  if (!youtube.isConfigured()) {
-    return res.status(503).json({ error: "YouTube not configured (YT_* env missing)" });
+  const { credentials } = req.body ?? {};
+  if (!youtube.isConfigured(credentials)) {
+    return res.status(503).json({ error: "YouTube not configured (no credentials and YT_* env missing)" });
   }
   const raw = (req.body?.video_ids ?? []) as unknown[];
   const ids = Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
   if (!ids.length) return res.status(400).json({ error: "video_ids[] required" });
   try {
-    const statuses = await youtube.getVideoStatuses(ids);
+    const statuses = await youtube.getVideoStatuses(ids, credentials);
     res.json({ statuses, requested: ids.length });
   } catch (err: unknown) {
     const msg = (err as Error)?.message || String(err);

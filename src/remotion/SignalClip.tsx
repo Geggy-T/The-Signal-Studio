@@ -27,9 +27,9 @@ const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%,
 // Channel logo (top-left, every frame). The coral "i" mark ships as public/logo.png
 // and is loaded via staticFile. Logo-only — no wordmark.
 const LOGO_SRC = staticFile("logo.png");
-const LogoBug: React.FC<{ spec: RenderSpec }> = () => (
+const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
   <Img
-    src={LOGO_SRC}
+    src={spec.brand.logo_url || LOGO_SRC}
     style={{
       position: "absolute",
       top: 52,

@@ -22,18 +22,54 @@ const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
 
 export type Privacy = "private" | "unlisted" | "public";
 
-export function isConfigured(): boolean {
-  return Boolean(
-    process.env.YT_CLIENT_ID && process.env.YT_CLIENT_SECRET && process.env.YT_REFRESH_TOKEN,
-  );
+/**
+ * Per-channel YouTube OAuth credentials. The Studio reads these from the channels
+ * table and passes them per request, so one worker publishes to many channels.
+ * When none are passed we fall back to the worker's YT_* env (the nibs channel).
+ */
+export interface YtCreds {
+  client_id: string;
+  client_secret: string;
+  refresh_token: string;
+  category_id?: string | null;
+}
+
+/** The env-configured (nibs) credentials, or null if the env is not set. */
+function envCreds(): YtCreds | null {
+  if (
+    process.env.YT_CLIENT_ID &&
+    process.env.YT_CLIENT_SECRET &&
+    process.env.YT_REFRESH_TOKEN
+  ) {
+    return {
+      client_id: process.env.YT_CLIENT_ID,
+      client_secret: process.env.YT_CLIENT_SECRET,
+      refresh_token: process.env.YT_REFRESH_TOKEN,
+      category_id: process.env.YT_CATEGORY_ID ?? null,
+    };
+  }
+  return null;
+}
+
+/** Resolve which credentials to use: explicit per-channel creds win, else env. */
+function resolveCreds(creds?: YtCreds | null): YtCreds {
+  const c = creds ?? envCreds();
+  if (!c) throw new Error("YouTube not configured (no per-channel creds and no YT_* env)");
+  return c;
+}
+
+/** True if we have usable credentials (passed in, or from env). */
+export function isConfigured(creds?: YtCreds | null): boolean {
+  return Boolean(creds ?? envCreds());
 }
 
 /** Exchange the long-lived refresh token for a short-lived access token. */
-async function getAccessToken(): Promise<string> {
+async function getAccessToken(creds?: YtCreds | null): Promise<string> {
+  const c = resolveCreds(creds);
   const body = new URLSearchParams({
-    client_id: process.env.YT_CLIENT_ID ?? "",
-    client_secret: process.env.YT_CLIENT_SECRET ?? "",
-    refresh_token: process.env.YT_REFRESH_TOKEN ?? "",
+    client_id: c.client_id,
+    client_secret: c.client_secret,
+    refresh_token: c.refresh_token,
     grant_type: "refresh_token",
   });
   const res = await fetch(TOKEN_URL, {
@@ -66,9 +102,10 @@ export interface UploadInput {
  * Resumable upload of a rendered MP4. Returns the new video id.
  * Two round-trips: start a resumable session (metadata), then PUT the bytes.
  */
-export async function uploadVideo(input: UploadInput): Promise<string> {
-  const accessToken = await getAccessToken();
-  const categoryId = process.env.YT_CATEGORY_ID || "28"; // Science & Technology
+export async function uploadVideo(input: UploadInput, creds?: YtCreds | null): Promise<string> {
+  const c = resolveCreds(creds);
+  const accessToken = await getAccessToken(c);
+  const categoryId = c.category_id || "28"; // Science & Technology
 
   // A future publishAt schedules the release. YouTube REQUIRES privacyStatus
   // "private" whenever publishAt is set; it auto-flips to Public at that instant.
@@ -135,8 +172,8 @@ export async function uploadVideo(input: UploadInput): Promise<string> {
  * Set a custom thumbnail on a video. Requires the channel to be able to use custom
  * thumbnails (usually phone-verified). Non-fatal for the caller if it fails.
  */
-export async function setThumbnail(videoId: string, jpeg: Uint8Array): Promise<void> {
-  const accessToken = await getAccessToken();
+export async function setThumbnail(videoId: string, jpeg: Uint8Array, creds?: YtCreds | null): Promise<void> {
+  const accessToken = await getAccessToken(creds);
   const res = await fetch(
     `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`,
     {
@@ -157,8 +194,8 @@ export async function setThumbnail(videoId: string, jpeg: Uint8Array): Promise<v
  * current status so the update preserves the other status fields — videos.update
  * resets any field of the "status" part that we omit.
  */
-export async function setPrivacy(videoId: string, privacyStatus: Privacy): Promise<void> {
-  const accessToken = await getAccessToken();
+export async function setPrivacy(videoId: string, privacyStatus: Privacy, creds?: YtCreds | null): Promise<void> {
+  const accessToken = await getAccessToken(creds);
 
   // Read current status to avoid clobbering madeForKids / license / embeddable.
   const getRes = await fetch(
@@ -197,8 +234,8 @@ export async function setPrivacy(videoId: string, privacyStatus: Privacy): Promi
  * Studio "Cancel" button on the scheduled list. Idempotent: a video with no
  * publishAt just stays private.
  */
-export async function unschedule(videoId: string): Promise<void> {
-  const accessToken = await getAccessToken();
+export async function unschedule(videoId: string, creds?: YtCreds | null): Promise<void> {
+  const accessToken = await getAccessToken(creds);
 
   const getRes = await fetch(
     `${VIDEOS_URL}?part=status&id=${encodeURIComponent(videoId)}`,
@@ -245,10 +282,10 @@ export interface VideoStatus {
  * Batches up to 50 ids per call. Videos NOT returned were deleted / are inaccessible —
  * the caller detects a deletion by a requested id being absent from the result.
  */
-export async function getVideoStatuses(videoIds: string[]): Promise<VideoStatus[]> {
+export async function getVideoStatuses(videoIds: string[], creds?: YtCreds | null): Promise<VideoStatus[]> {
   const ids = videoIds.filter(Boolean);
   if (!ids.length) return [];
-  const accessToken = await getAccessToken();
+  const accessToken = await getAccessToken(creds);
   const out: VideoStatus[] = [];
   for (let i = 0; i < ids.length; i += 50) {
     const batch = ids.slice(i, i + 50);
