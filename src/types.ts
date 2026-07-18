@@ -66,6 +66,13 @@ export const RenderSpecSchema = z.object({
   hook_words: z.string().default(""),
   peak_frame_sec: z.number().nullable().optional(),
   opening_variant: z.enum(["generated", "peak", "none"]).nullable().optional(),
+  // 3-BEAT COLD OPEN (final69). When these are set, the opener becomes:
+  //  Beat 1 (~1.2s) brand frame + hook_words, no VO ->
+  //  Beat 2 the hand-picked DRAMATIC line playing LIVE from [teaser_start_sec, teaser_end_sec]
+  //         (real audio) -> Beat 3 Matt freezes it and lands his short hook.
+  // Clip-relative seconds. Absent -> legacy single-beat opener (frame + VO together).
+  teaser_start_sec: z.number().nullable().optional(),
+  teaser_end_sec: z.number().nullable().optional(),
 
   // Brand tokens (defaults = The Signal).
   brand: z
@@ -372,12 +379,42 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
 
   // 1) OPENING HOOK — Matt lands a killer hook first, over a freeze of the opening
   //    frame (a real video frame, not black), BEFORE the speaker is heard.
-  if (spec.audio.hook_url || spec.hook_text) {
+  // Variant B: open on the clip's most arresting frame, not t=0. Clamp into range.
+  // (Variant A replaces the frozen frame entirely with the generated image, so the
+  // freeze offset is irrelevant there.)
+  const peak = spec.peak_frame_sec != null ? Math.max(0, Math.min(C - 0.2, spec.peak_frame_sec)) : 0;
+  const hasHook = Boolean(spec.audio.hook_url || spec.hook_text);
+  const tStart = spec.teaser_start_sec;
+  const tEnd = spec.teaser_end_sec;
+  const hasTeaser = tStart != null && tEnd != null && tEnd > tStart;
+
+  if (hasTeaser) {
+    // 3-BEAT COLD OPEN (how a human edits it): brand frame -> hand-picked DRAMATIC line
+    // live -> Matt's hook. No four-second talking-head setup.
+    const FRAME_HOLD = 1.2; // Beat 1: brand frame + hook_words, held ~1.2s, no VO.
+    items.push({ kind: "insert", freezeSec: peak, durSec: FRAME_HOLD, url: null, text: "" });
+
+    // Beat 2: the hand-picked dramatic line, LIVE (real source audio). Clamp so it stays
+    // a punchy teaser (never a long run) and stays inside the clip window.
+    const ts = Math.max(0, Math.min(C - 0.3, tStart));
+    let te = Math.max(ts + 0.6, Math.min(C - 0.1, tEnd));
+    if (te - ts > 3.2) te = ts + 3.2;
+    items.push({ kind: "source", startSec: ts, endSec: te, durSec: te - ts });
+
+    // Beat 3: Matt freezes the moment and lands his short hook.
+    if (hasHook) {
+      const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
+      items.push({
+        kind: "insert",
+        freezeSec: te,
+        durSec: hookDur,
+        url: spec.audio.hook_url ?? null,
+        text: spec.hook_text || spec.title,
+      });
+    }
+  } else if (hasHook) {
+    // Legacy single-beat opener (frame + VO together) — old specs with no teaser fields.
     const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
-    // Variant B: open on the clip's most arresting frame, not t=0. Clamp into range.
-    // (Variant A replaces the frozen frame entirely with the generated image, so the
-    // freeze offset is irrelevant there.)
-    const peak = spec.peak_frame_sec != null ? Math.max(0, Math.min(C - 0.2, spec.peak_frame_sec)) : 0;
     items.push({
       kind: "insert",
       freezeSec: peak,
