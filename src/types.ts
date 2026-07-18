@@ -55,6 +55,18 @@ export const RenderSpecSchema = z.object({
   hook_text: z.string().default(""),
   takeaway_text: z.string().default("Noise off."),
 
+  // OPENING (swipe-killer) — v1 A/B test of the first ~1.5s.
+  //  Variant A: opening_image_url = a generated cold-open image; the opener shows THIS
+  //    full-frame (with push-in) instead of a frozen source frame.
+  //  Variant B: peak_frame_sec = the clip's most arresting moment (clip-relative sec);
+  //    the opener freezes there instead of at t=0.
+  //  hook_words = the punchy 3-6 word ON-SCREEN hook (mute-legible), preferred over the
+  //    long headline for the opening flash. opening_variant is telemetry only.
+  opening_image_url: z.string().url().nullable().optional(),
+  hook_words: z.string().default(""),
+  peak_frame_sec: z.number().nullable().optional(),
+  opening_variant: z.enum(["generated", "peak", "none"]).nullable().optional(),
+
   // Brand tokens (defaults = The Signal).
   brand: z
     .object({
@@ -362,9 +374,13 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   //    frame (a real video frame, not black), BEFORE the speaker is heard.
   if (spec.audio.hook_url || spec.hook_text) {
     const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
+    // Variant B: open on the clip's most arresting frame, not t=0. Clamp into range.
+    // (Variant A replaces the frozen frame entirely with the generated image, so the
+    // freeze offset is irrelevant there.)
+    const peak = spec.peak_frame_sec != null ? Math.max(0, Math.min(C - 0.2, spec.peak_frame_sec)) : 0;
     items.push({
       kind: "insert",
-      freezeSec: 0,
+      freezeSec: peak,
       durSec: hookDur,
       url: spec.audio.hook_url ?? null,
       text: spec.hook_text || spec.title,

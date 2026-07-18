@@ -267,12 +267,17 @@ const MattInsert: React.FC<{
   const opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
   const clean = deAI(text);
   const FLASH_WORDS = 3;
-  // Opening flash = the crafted packaging headline if we have one; otherwise fall
-  // back to the first few words of the spoken hook. With a real headline the whole
-  // hook line still shows below it.
+  // Opening flash priority (swipe-killer v1): the punchy 3-6 word hook_words if we
+  // have them (mute-legible, the star of the scroll-stopper), else the packaging
+  // headline, else the first words of the spoken hook.
+  const hookWords = deAI(spec.hook_words || "").trim();
   const headline = deAI(spec.headline || "").trim();
-  const flash = isOpening ? headline || firstWords(text, FLASH_WORDS) : "";
-  const body = isOpening ? (headline ? clean : restWords(text, FLASH_WORDS)) : clean;
+  const flash = isOpening ? hookWords || headline || firstWords(text, FLASH_WORDS) : "";
+  // With punchy hook_words the opener stays clean — no long body line under the flash.
+  const body = isOpening ? (hookWords ? "" : headline ? clean : restWords(text, FLASH_WORDS)) : clean;
+  // Variant A: a generated cold-open IMAGE replaces the frozen source frame on the
+  // opening beat. Absent -> frozen source frame (Variant B freezes on the peak).
+  const openingImg = isOpening ? spec.opening_image_url ?? null : null;
   // Frame-0 hook: the opening headline is FULLY VISIBLE on the literal first frame
   // (no fade) — in the swipe feed that first frame is the de-facto thumbnail, so it
   // must never be blank. A subtle scale punch (0.9->1) adds energy while staying
@@ -286,24 +291,13 @@ const MattInsert: React.FC<{
   const flashFontSize = flash.length <= 14 ? 132 : flash.length <= 26 ? 108 : flash.length <= 40 ? 86 : 70;
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
-      {/* Blurred fill so the frozen frame never sits in black bars. Rendered at
-          1/4 size then scaled 4x so the gaussian is ~16x cheaper (see SourceSegment). */}
-      <Freeze frame={s(freezeSec)}>
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "25%",
-            height: "25%",
-            transform: "scale(4)",
-            transformOrigin: "top left",
-          }}
-        >
-          <OffthreadVideo
-            src={spec.source_url}
-            muted
-            volume={0}
+      {openingImg ? (
+        <>
+          {/* Variant A cold-open: the generated image IS the frame that stops the
+              thumb. Blurred fill behind so it never sits in black bars, then the
+              image full-frame with the same slow push-in. */}
+          <Img
+            src={openingImg}
             style={{
               position: "absolute",
               width: "100%",
@@ -312,26 +306,71 @@ const MattInsert: React.FC<{
               filter: "blur(6px) brightness(0.5)",
             }}
           />
-        </div>
-      </Freeze>
-      {/* Frozen source frame behind Matt */}
-      <Freeze frame={s(freezeSec)}>
-        <OffthreadVideo
-          src={spec.source_url}
-          muted
-          volume={0}
-          style={{
-            position: "absolute",
-            width: "100%",
-            height: "100%",
-            objectFit: "contain",
-            transform: `scale(${zoom})`,
-            transformOrigin: "center",
-          }}
-        />
-      </Freeze>
-      {/* Dim so it's clear we've cut to commentary */}
-      <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.62)" }} />
+          <Img
+            src={openingImg}
+            style={{
+              position: "absolute",
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: `scale(${zoom})`,
+              transformOrigin: "center",
+            }}
+          />
+          {/* Light dim only — the cold-open image must read bright; text still has
+              its own stroke/shadow for legibility. */}
+          <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.30)" }} />
+        </>
+      ) : (
+        <>
+          {/* Blurred fill so the frozen frame never sits in black bars. Rendered at
+              1/4 size then scaled 4x so the gaussian is ~16x cheaper (see SourceSegment). */}
+          <Freeze frame={s(freezeSec)}>
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "25%",
+                height: "25%",
+                transform: "scale(4)",
+                transformOrigin: "top left",
+              }}
+            >
+              <OffthreadVideo
+                src={spec.source_url}
+                muted
+                volume={0}
+                style={{
+                  position: "absolute",
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  filter: "blur(6px) brightness(0.5)",
+                }}
+              />
+            </div>
+          </Freeze>
+          {/* Frozen source frame behind Matt (Variant B freezes on the peak moment) */}
+          <Freeze frame={s(freezeSec)}>
+            <OffthreadVideo
+              src={spec.source_url}
+              muted
+              volume={0}
+              style={{
+                position: "absolute",
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                transform: `scale(${zoom})`,
+                transformOrigin: "center",
+              }}
+            />
+          </Freeze>
+          {/* Dim so it's clear we've cut to commentary */}
+          <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.62)" }} />
+        </>
+      )}
       {/* Keep the pinned headline up top on Matt's takes too (but not the opening,
           which shows the big animated flash instead). */}
       {isOpening ? null : <HeadlineBar spec={spec} />}
@@ -368,45 +407,49 @@ const MattInsert: React.FC<{
           </div>
         </div>
       ) : null}
-      <AbsoluteFill
-        style={{ justifyContent: "center", alignItems: "center", padding: "0 90px", opacity }}
-      >
-        <div
-          style={{
-            textAlign: "center",
-            maxWidth: 940,
-            fontFamily: fontOf(spec),
-            marginTop: isOpening ? 200 : 0,
-          }}
+      {/* Clean cold-open: with punchy hook_words the opener shows ONLY the big flash,
+          no name label / body line. Otherwise keep the "cut to Matt" treatment. */}
+      {isOpening && hookWords ? null : (
+        <AbsoluteFill
+          style={{ justifyContent: "center", alignItems: "center", padding: "0 90px", opacity }}
         >
           <div
             style={{
-              color: spec.brand.accent,
-              letterSpacing: 6,
-              fontSize: 28,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              marginBottom: 26,
+              textAlign: "center",
+              maxWidth: 940,
+              fontFamily: fontOf(spec),
+              marginTop: isOpening ? 200 : 0,
             }}
           >
-            ▍ {spec.brand.host_name || "Matt"}
-          </div>
-          {body ? (
             <div
               style={{
-                color: spec.brand.text,
-                fontSize: 62,
-                fontWeight: 800,
-                lineHeight: 1.18,
-                WebkitTextStroke: "1px rgba(0,0,0,0.45)",
-                textShadow: "0 2px 12px rgba(0,0,0,0.8)",
+                color: spec.brand.accent,
+                letterSpacing: 6,
+                fontSize: 28,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                marginBottom: 26,
               }}
             >
-              {body}
+              ▍ {spec.brand.host_name || "Matt"}
             </div>
-          ) : null}
-        </div>
-      </AbsoluteFill>
+            {body ? (
+              <div
+                style={{
+                  color: spec.brand.text,
+                  fontSize: 62,
+                  fontWeight: 800,
+                  lineHeight: 1.18,
+                  WebkitTextStroke: "1px rgba(0,0,0,0.45)",
+                  textShadow: "0 2px 12px rgba(0,0,0,0.8)",
+                }}
+              >
+                {body}
+              </div>
+            ) : null}
+          </div>
+        </AbsoluteFill>
+      )}
     </AbsoluteFill>
   );
 };
