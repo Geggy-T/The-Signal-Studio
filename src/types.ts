@@ -29,10 +29,19 @@ export const RenderSpecSchema = z.object({
     interjections: z
       .array(
         z.object({
-          at: z.number(), // seconds into the CLIP where Matt cuts in
+          // Legacy hint (seconds into the CLIP). The worker no longer relies on this
+          // for placement; kept optional for backward compat with older specs.
+          at: z.number().optional().default(0),
           url: z.string().url(),
           duration_s: z.number().default(3), // worker sets to the real audio length
           text: z.string().optional().default(""), // Matt's words, shown on the frozen frame
+          // NEW (meaning-anchored placement): a verbatim snippet of the SPEAKER'S line
+          // that this reaction immediately follows. The commentary step copies 5-10
+          // words straight from the transcript; the worker locates that line and cuts
+          // in right after it. This is what makes cut-ins land on natural moments even
+          // when punctuation is sparse. Absent on old specs -> worker falls back to the
+          // even sentence-end spread.
+          after_quote: z.string().optional(),
         })
       )
       .default([]),
@@ -252,6 +261,93 @@ function snapClipEnd(spec: RenderSpec, cursor: number): number {
   return C;
 }
 
+/** Lowercase word tokens, punctuation stripped, for fuzzy transcript matching. */
+function normTokens(s: string): string[] {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * MEANING-ANCHORED placement. The commentary step tells us the exact spoken line a
+ * reaction follows (after_quote, copied verbatim from the transcript). We find where
+ * that line ENDS in the source words and return its clip-relative end time (+breath),
+ * so Matt cuts in right after the speaker makes that point. Fuzzy: matches the best
+ * in-order run of transcript words against the quote tokens, tolerant of small
+ * transcription differences. Returns null if there is no confident match or the
+ * point falls outside the usable window.
+ */
+function resolveQuoteAnchor(spec: RenderSpec, quote: string): number | null {
+  const q = normTokens(quote);
+  if (q.length < 3) return null;
+  const words = spec.captions;
+  if (words.length < 3) return null;
+  const wTok = words.map((w) => normTokens(w.text)[0] ?? "");
+
+  // Slide a window (quote length + slack) and count in-order matches. Track the index
+  // of the transcript word that matched the LAST quote token — that is the cut point.
+  let best = { score: 0, endIdx: -1 };
+  const span = q.length + 4;
+  for (let start = 0; start < words.length; start++) {
+    let qi = 0;
+    let score = 0;
+    let endIdx = -1;
+    for (let k = start; k < Math.min(words.length, start + span) && qi < q.length; k++) {
+      if (wTok[k] && wTok[k] === q[qi]) {
+        score++;
+        endIdx = k;
+        qi++;
+      }
+    }
+    if (score > best.score) best = { score, endIdx };
+  }
+  // Require a confident match: >= 60% of the quote tokens in order (min 3).
+  const need = Math.max(3, Math.ceil(q.length * 0.6));
+  if (best.endIdx < 0 || best.score < need) return null;
+
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const rel = words[best.endIdx].end - spec.t_in + 0.15; // small breath after the line
+  if (rel <= 0.6 || rel >= C - 0.4) return null;
+  return rel;
+}
+
+/**
+ * The quote anchor usually sits at a phrase end, but if the speaker barrels straight
+ * on with no pause, nudge forward a little to the next sentence end (or real >=0.4s
+ * pause) so Matt still cuts in on a clean break — never mid-flow. Small window only,
+ * so the cut stays where the meaning is.
+ */
+function snapForwardToBoundary(spec: RenderSpec, rel: number): number {
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const words = spec.captions;
+  if (!words.length) return rel;
+  const abs = spec.t_in + rel;
+  const i = words.findIndex((w) => w.end >= abs - 0.05);
+  if (i === -1) return rel;
+  const nextStart = words[i + 1]?.start;
+  if (nextStart == null || nextStart - words[i].end >= 0.35) return rel; // already clean
+  const WINDOW = 3.5;
+  const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
+  for (let k = i; k < words.length; k++) {
+    if (words[k].end - abs > WINDOW) break;
+    if (endsSentence(words[k].text)) return Math.min(C - 0.4, words[k].end - spec.t_in + 0.15);
+  }
+  let bestGap = 0;
+  let bestIdx = -1;
+  for (let k = i; k < words.length - 1; k++) {
+    if (words[k].end - abs > WINDOW) break;
+    const gap = words[k + 1].start - words[k].end;
+    if (gap > bestGap) {
+      bestGap = gap;
+      bestIdx = k;
+    }
+  }
+  if (bestIdx !== -1 && bestGap >= 0.4) return Math.min(C - 0.4, words[bestIdx].end - spec.t_in + 0.12);
+  return rel;
+}
+
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
   const C = Math.max(1, spec.t_out - spec.t_in);
   const INSERT_PAD = 0.5;
@@ -275,33 +371,20 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     });
   }
 
-  // 2) REACTIONS — spread evenly across the clip so the speaker gets a real run
-  //    before each cut-in, then snapped to a sentence end. Ignore the model's raw
-  //    timestamps (they cluster); we place them ourselves.
+  // 2) REACTIONS — MEANING-ANCHORED. The commentary step picks the exact spoken line
+  //    each take reacts to (after_quote); we cut in right AFTER that line. Count is
+  //    ADAPTIVE — we place only as many takes as have a real landing spot — and a hard
+  //    minimum gap keeps them from stacking. We NEVER force a fixed number and NEVER
+  //    cut mid-sentence. If no quotes resolve (older specs / no match), we fall back to
+  //    the even sentence-end spread so we never regress to zero.
   type R = { at: number; dur: number; url?: string | null; text: string };
-  // Retention: land Matt's FIRST take EARLY (short opening run). Viewers drift
-  // during a long uninterrupted opening clip, so the first cut-in comes at ~FIRST_SEG
-  // instead of the old even-split (which pushed it ~18s+ in). Later takes still
-  // spread across the rest so Matt stays present to the end.
-  // IMPORTANT: every cut-in lands ONLY after the speaker completes a sentence.
-  // We collect the sentence-end times up front and place each take on the nearest
-  // one. We NEVER nudge a chosen time off its sentence end for spacing; if two
-  // takes would collide we pick a different sentence end (or drop the take). This
-  // is what guarantees Matt never interrupts mid-sentence.
-  const FIRST_SEG = 8; // aim Matt's first take ~8s into the clip
-  const HARD_MIN = 7; // never closer than this
-  const END_GUARD = 10; // leave a real final speaker stretch before the takeaway
   const raw = spec.audio.interjections;
-  // Latest point a cut-in may land. The final speaker run (END_GUARD) sits AFTER
-  // this, so a take placed here is never dropped for being "too late".
-  const lastAllowed = Math.max(FIRST_SEG + HARD_MIN, C - END_GUARD);
-  // How many takes physically fit with HARD_MIN spacing; otherwise place them all.
-  const capacity = Math.max(1, 1 + Math.floor((lastAllowed - FIRST_SEG) / HARD_MIN));
-  const M = Math.min(raw.length, capacity);
-  const valid: R[] = [];
+  const HARD_MIN = 8; // never two takes closer than this (keeps it natural, unstacked)
+  const FIRST_MIN = 4; // earliest a take may land
+  const END_GUARD = 10; // real final speaker stretch before the takeaway
+  const lastAllowed = Math.max(FIRST_MIN + HARD_MIN, C - END_GUARD);
 
-  // Speaker sentence-end times (clip-relative, plus a small breath after the
-  // period so the final word fully lands before Matt speaks).
+  // Speaker sentence-end times (clip-relative, + a breath), used by the fallback.
   const endsSentenceTok = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
   const sentenceEnds: number[] = [];
   for (const w of spec.captions) {
@@ -311,40 +394,63 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   }
   sentenceEnds.sort((a, b) => a - b);
 
-  // Start prev far enough back that the first candidate near FIRST_SEG is eligible.
-  let prev = FIRST_SEG - HARD_MIN - 1;
-  for (let i = 0; i < M; i++) {
-    // Even fractions from FIRST_SEG..lastAllowed: first take lands early, the rest
-    // spread across the clip so Matt stays present right up to the final stretch.
-    const frac = M <= 1 ? 0 : i / (M - 1);
-    const desired = FIRST_SEG + frac * (lastAllowed - FIRST_SEG);
-    let at = -1;
-    if (sentenceEnds.length) {
-      // Pick the sentence end nearest the target that respects spacing + window.
-      // Because we choose from real sentence ends only, the cut is guaranteed to
-      // fall after a completed sentence (never mid-sentence).
-      let bestDist = Infinity;
-      for (const s of sentenceEnds) {
-        if (s < prev + HARD_MIN) continue; // too close to the previous take
-        if (s > lastAllowed) break; // past the final-stretch guard
-        const d = Math.abs(s - desired);
-        if (d < bestDist) {
-          bestDist = d;
-          at = s;
-        }
-      }
-      if (at < 0) continue; // no clean sentence end fits here: skip, don't chop
-    } else {
-      // Rare: transcript carries no usable punctuation. Fall back to the pause
-      // snapper (now requires a real >= 0.4s pause) and clamp into the window.
-      at = snapToPause(spec, desired);
-      at = Math.max(at, prev + HARD_MIN);
-      at = Math.min(at, lastAllowed);
-      if (at <= prev + 0.5) continue;
+  const valid: R[] = [];
+
+  // --- PRIMARY: resolve each interjection's after_quote to a real cut time. ---
+  const anchored: { at: number; idx: number }[] = [];
+  raw.forEach((it, idx) => {
+    const quote = it.after_quote;
+    if (!quote) return;
+    let at = resolveQuoteAnchor(spec, quote);
+    if (at == null) return;
+    at = snapForwardToBoundary(spec, at);
+    if (at < FIRST_MIN || at > lastAllowed) return;
+    anchored.push({ at, idx });
+  });
+  anchored.sort((a, b) => a.at - b.at);
+
+  if (anchored.length) {
+    // Enforce spacing: keep a take only if it clears HARD_MIN from the last kept one.
+    // idx pairing preserves each reaction's own text + audio (order is meaning, not time).
+    let prev = -Infinity;
+    for (const c of anchored) {
+      if (c.at < prev + HARD_MIN) continue; // too close: drop this collider
+      const it = raw[c.idx];
+      valid.push({ at: c.at, dur: (it.duration_s ?? 3) + INSERT_PAD, url: it.url, text: it.text ?? "" });
+      prev = c.at;
     }
-    const it = raw[i];
-    valid.push({ at, dur: (it.duration_s ?? 3) + INSERT_PAD, url: it.url, text: it.text ?? "" });
-    prev = at;
+  } else {
+    // --- FALLBACK: no quotes matched (old spec). Even spread on real sentence ends. ---
+    const FIRST_SEG = 8; // aim the first take ~8s in
+    const capacity = Math.max(1, 1 + Math.floor((lastAllowed - FIRST_SEG) / HARD_MIN));
+    const M = Math.min(raw.length, capacity);
+    let prev = FIRST_SEG - HARD_MIN - 1;
+    for (let i = 0; i < M; i++) {
+      const frac = M <= 1 ? 0 : i / (M - 1);
+      const desired = FIRST_SEG + frac * (lastAllowed - FIRST_SEG);
+      let at = -1;
+      if (sentenceEnds.length) {
+        let bestDist = Infinity;
+        for (const s of sentenceEnds) {
+          if (s < prev + HARD_MIN) continue; // too close to the previous take
+          if (s > lastAllowed) break; // past the final-stretch guard
+          const d = Math.abs(s - desired);
+          if (d < bestDist) {
+            bestDist = d;
+            at = s;
+          }
+        }
+        if (at < 0) continue; // no clean sentence end fits here: skip, don't chop
+      } else {
+        at = snapToPause(spec, desired);
+        at = Math.max(at, prev + HARD_MIN);
+        at = Math.min(at, lastAllowed);
+        if (at <= prev + 0.5) continue;
+      }
+      const it = raw[i];
+      valid.push({ at, dur: (it.duration_s ?? 3) + INSERT_PAD, url: it.url, text: it.text ?? "" });
+      prev = at;
+    }
   }
 
   // 3) Interleave clean source segments with the reaction inserts, then the takeaway.
