@@ -12,6 +12,7 @@ import {
   useCurrentFrame,
 } from "remotion";
 import { loadFont as loadBubbly } from "@remotion/google-fonts/Baloo2";
+import { loadFont as loadHeavy } from "@remotion/google-fonts/ArchivoBlack";
 import type { RenderSpec, Word } from "../types";
 import { FPS, buildTimeline, deAI, TAKEAWAY_LEAD_SECONDS } from "../types";
 
@@ -24,6 +25,10 @@ const MATT_VOLUME = 0.8; // Matt's VO level in the mix (raised ~15% from 0.7)
 const SFX_VOLUME = 0.45; // subtle whoosh+click on each cut, under Matt's VO
 const FONT = "'Space Grotesk', system-ui, sans-serif";
 const { fontFamily: BUBBLY_FONT } = loadBubbly();
+// Heavy display face for the big HOOK title / headline only (captions + body stay in
+// the clean grotesk). Space Grotesk caps at 700, so a "bold" title rendered there looks
+// thin/cheap; Archivo Black is a true 900 that reads premium and punchy.
+const { fontFamily: HEAVY_FONT } = loadHeavy();
 const fontOf = (spec: RenderSpec): string =>
   spec.brand.font === "bubbly" ? BUBBLY_FONT : FONT;
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
@@ -69,14 +74,14 @@ const HeadlineBar: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
         style={{
           textAlign: "center",
           color: spec.brand.accent,
-          fontFamily: fontOf(spec),
+          fontFamily: HEAVY_FONT,
           fontSize: headlineFontSize(headline),
-          fontWeight: 800,
-          lineHeight: 1.04,
-          letterSpacing: 1,
+          fontWeight: 900,
+          lineHeight: 1.02,
+          letterSpacing: 0.5,
           textTransform: "uppercase",
-          WebkitTextStroke: "2px rgba(0,0,0,0.5)",
-          textShadow: "0 4px 20px rgba(0,0,0,0.9)",
+          WebkitTextStroke: "3.5px rgba(0,0,0,0.62)",
+          textShadow: "0 5px 22px rgba(0,0,0,0.95), 0 2px 4px rgba(0,0,0,0.9)",
         }}
       >
         {headline}
@@ -398,14 +403,14 @@ const MattInsert: React.FC<{
               transform: `scale(${flashScale})`,
               textAlign: "center",
               color: spec.brand.accent,
-              fontFamily: fontOf(spec),
+              fontFamily: HEAVY_FONT,
               fontSize: flashFontSize,
-              fontWeight: 800,
-              lineHeight: 1.04,
-              letterSpacing: 1,
+              fontWeight: 900,
+              lineHeight: 1.02,
+              letterSpacing: 0.5,
               textTransform: "uppercase",
-              WebkitTextStroke: "2px rgba(0,0,0,0.5)",
-              textShadow: "0 4px 20px rgba(0,0,0,0.9)",
+              WebkitTextStroke: "3.5px rgba(0,0,0,0.62)",
+              textShadow: "0 5px 22px rgba(0,0,0,0.95), 0 2px 4px rgba(0,0,0,0.9)",
             }}
           >
             {flash}
