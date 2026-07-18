@@ -20,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final70-frame-halfsec";
+const BUILD = "final71-tiktok-public";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -58,6 +58,110 @@ function releaseRenderSlot(): void {
 app.get("/health", (_req, res) =>
   res.json({ ok: true, service: "signal-render-worker", build: BUILD, audio_sizecheck: true })
 );
+
+// ---------------------------------------------------------------------------
+// PUBLIC pages for the TikTok app registration. These deliberately live on the
+// worker, NOT the Studio: the Studio's host returns empty bodies to non-browser
+// clients (bot protection), so TikTok's automated verifier can never read them.
+// This is a plain Express server, so verifier + reviewers both get real content.
+// All routes below are intentionally UNAUTHENTICATED.
+// ---------------------------------------------------------------------------
+const STUDIO_URL = (process.env.STUDIO_URL || "https://signal-studio-scribe.lovable.app").replace(/\/+$/, "");
+
+const TIKTOK_VERIFY_FILE = "tiktok0IOjlUiAFRuLioVvhU1Iae0rMhBbWuVx.txt";
+const TIKTOK_VERIFY_BODY = "tiktok-developers-site-verification=0IOjlUiAFRuLioVvhU1Iae0rMhBbWuVx";
+
+app.get(`/${TIKTOK_VERIFY_FILE}`, (_req, res) => {
+  res.set("Content-Type", "text/plain; charset=utf-8").send(TIKTOK_VERIFY_BODY);
+});
+
+const legalPage = (title: string, bodyHtml: string) => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} — nibs</title><meta name="robots" content="noindex">
+<style>body{background:#0f1113;color:#d4d4d4;font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;margin:0}
+.wrap{max-width:720px;margin:0 auto;padding:48px 24px}h1{color:#fff;font-size:28px;margin:0 0 24px}
+h2{color:#fff;font-size:18px;margin:28px 0 6px}a{color:#F5A623}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;color:#8A9099}</style>
+</head><body><div class="wrap"><h1>${title}</h1>${bodyHtml}
+<footer>Operated by Media68 Ltd. Contact: ytrealityjuice@gmail.com</footer></div></body></html>`;
+
+app.get("/terms", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8").send(
+    legalPage(
+      "Terms of Service",
+      `<p><strong>Last updated:</strong> 18 July 2026</p>
+<p>This tool ("nibs") is a private, internal content-production tool operated by Media68 Ltd. It is not a public consumer service and there is no public sign-up.</p>
+<h2>1. Access</h2><p>Access is limited to authorised operators of Media68 Ltd. Unauthorised access is prohibited.</p>
+<h2>2. Purpose</h2><p>The tool is used to produce, schedule and publish video content to the operator's own connected accounts (for example YouTube and TikTok).</p>
+<h2>3. Operator responsibility</h2><p>The operator is responsible for the content they publish through the tool and for complying with the terms and policies of any connected platform.</p>
+<h2>4. No warranty</h2><p>The service is provided "as is" with no warranty of any kind. Media68 Ltd is not liable for platform outages, third-party API changes, or any resulting loss.</p>
+<h2>5. Contact</h2><p>Questions about these terms: <a href="mailto:ytrealityjuice@gmail.com">ytrealityjuice@gmail.com</a>.</p>`
+    )
+  );
+});
+
+app.get("/privacy", (_req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8").send(
+    legalPage(
+      "Privacy Policy",
+      `<p><strong>Last updated:</strong> 18 July 2026</p>
+<p>nibs is a private internal tool operated by Media68 Ltd. This policy describes what data the tool handles.</p>
+<h2>1. No public users</h2><p>We do not collect personal data from members of the public. There is no public sign-up.</p>
+<h2>2. Connected platform accounts</h2><p>When an authorised operator connects a third-party account (such as YouTube or TikTok), we store the OAuth tokens issued to us (including the refresh token) and an account identifier. These are used solely so the tool can upload and schedule content to that operator's own account.</p>
+<h2>3. Operator content</h2><p>We store the operator's own video source material, transcripts, generated copy, and the performance analytics of the operator's own channels.</p>
+<h2>4. Data belonging to viewers</h2><p>We do not collect, store, or process personal data belonging to viewers or other users of the connected platforms.</p>
+<h2>5. Sharing</h2><p>We do not sell, rent, or share data with third parties. Data is processed only by the infrastructure providers used to run the tool: hosting, database and storage, and the AI and voice APIs used to generate content.</p>
+<h2>6. Credential storage</h2><p>OAuth credentials are stored with restricted server-side access only.</p>
+<h2>7. Revoking access</h2><p>An operator can disconnect an account inside the tool at any time, and can additionally revoke access directly in TikTok settings (Manage app permissions) or Google account security settings. Revoking access immediately stops the tool from being able to post to that account.</p>
+<h2>8. Retention</h2><p>Connection credentials are kept until the account is disconnected. Produced media and working data are routinely purged.</p>
+<h2>9. Contact</h2><p>Privacy requests, including deletion: <a href="mailto:ytrealityjuice@gmail.com">ytrealityjuice@gmail.com</a>.</p>`
+    )
+  );
+});
+
+/**
+ * TikTok OAuth callback. TikTok redirects the browser here after the operator
+ * approves. We do NOT hold the TikTok client secret on the worker — we forward
+ * the code+state to the Studio (server-to-server, worker secret), which verifies
+ * the state, exchanges the code and stores the refresh token. Then we bounce the
+ * browser back to the Studio.
+ */
+app.get("/tiktok/callback", async (req, res) => {
+  const code = req.query.code ? String(req.query.code) : "";
+  const state = req.query.state ? String(req.query.state) : "";
+  const oauthErr = req.query.error ? String(req.query.error) : "";
+  const desc = req.query.error_description ? String(req.query.error_description) : "";
+  const back = (status: "ok" | "error", message?: string) => {
+    const qs = new URLSearchParams({ tiktok: status });
+    if (message) qs.set("message", message.slice(0, 300));
+    res.redirect(302, `${STUDIO_URL}/voices?${qs.toString()}`);
+  };
+  if (oauthErr) return back("error", desc || oauthErr);
+  if (!code || !state) return back("error", "Missing code or state");
+  try {
+    const r = await fetch(`${STUDIO_URL}/api/tiktok/exchange`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WORKER_SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ code, state }),
+    });
+    const text = await r.text();
+    let j: { ok?: boolean; error?: string } = {};
+    try {
+      j = JSON.parse(text);
+    } catch {
+      /* non-JSON */
+    }
+    if (!r.ok || j.error) return back("error", j.error || `Studio ${r.status}: ${text.slice(0, 200)}`);
+    console.log("[tiktok] connected via worker callback");
+    return back("ok");
+  } catch (err: unknown) {
+    return back("error", (err as Error)?.message || "exchange failed");
+  }
+});
 
 /**
  * Pulse — the demand signal for discovery v2. Returns momentum-ranked AI/tech stories
