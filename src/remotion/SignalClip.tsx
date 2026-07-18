@@ -351,7 +351,9 @@ const MattInsert: React.FC<{
               />
             </div>
           </Freeze>
-          {/* Frozen source frame behind Matt (Variant B freezes on the peak moment) */}
+          {/* Frozen source frame. On the OPENING beat we fill the frame (cover) so the
+              peak moment is a full-bleed scroll-stopper, not a small letterboxed band in
+              black. Mid-clip Matt takes keep "contain" (the established letterbox look). */}
           <Freeze frame={s(freezeSec)}>
             <OffthreadVideo
               src={spec.source_url}
@@ -361,14 +363,17 @@ const MattInsert: React.FC<{
                 position: "absolute",
                 width: "100%",
                 height: "100%",
-                objectFit: "contain",
+                objectFit: isOpening ? "cover" : "contain",
                 transform: `scale(${zoom})`,
                 transformOrigin: "center",
               }}
             />
           </Freeze>
-          {/* Dim so it's clear we've cut to commentary */}
-          <AbsoluteFill style={{ backgroundColor: "rgba(9,11,13,0.62)" }} />
+          {/* Dim: lighter on the opening (full-bleed frame must read bright) than on
+              mid-clip takes (where we want it clearly "cut to commentary"). */}
+          <AbsoluteFill
+            style={{ backgroundColor: isOpening ? "rgba(9,11,13,0.42)" : "rgba(9,11,13,0.62)" }}
+          />
         </>
       )}
       {/* Keep the pinned headline up top on Matt's takes too (but not the opening,
