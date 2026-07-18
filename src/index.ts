@@ -20,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final71-tiktok-public";
+const BUILD = "final72-tiktok-anyverify";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -68,11 +68,23 @@ app.get("/health", (_req, res) =>
 // ---------------------------------------------------------------------------
 const STUDIO_URL = (process.env.STUDIO_URL || "https://signal-studio-scribe.lovable.app").replace(/\/+$/, "");
 
-const TIKTOK_VERIFY_FILE = "tiktok0IOjlUiAFRuLioVvhU1Iae0rMhBbWuVx.txt";
-const TIKTOK_VERIFY_BODY = "tiktok-developers-site-verification=0IOjlUiAFRuLioVvhU1Iae0rMhBbWuVx";
-
-app.get(`/${TIKTOK_VERIFY_FILE}`, (_req, res) => {
-  res.set("Content-Type", "text/plain; charset=utf-8").send(TIKTOK_VERIFY_BODY);
+/**
+ * TikTok site-verification signature files. TikTok issues a DIFFERENT file per
+ * property (per URL prefix / domain you register), named tiktok<CODE>.txt and
+ * containing "tiktok-developers-site-verification=<CODE>" — the same CODE in both.
+ * So rather than hard-coding one hash (and redeploying every time TikTok issues a
+ * new property), we derive the body from the requested filename. Any valid TikTok
+ * verification file therefore resolves automatically, no redeploy needed.
+ * Deliberately unauthenticated, plain text, no redirect.
+ */
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  const m = /^\/tiktok([A-Za-z0-9_-]{8,128})\.txt$/.exec(req.path);
+  if (!m) return next();
+  console.log(`[tiktok] served verification file ${req.path}`);
+  res
+    .set("Content-Type", "text/plain; charset=utf-8")
+    .send(`tiktok-developers-site-verification=${m[1]}`);
 });
 
 const legalPage = (title: string, bodyHtml: string) => `<!doctype html>
