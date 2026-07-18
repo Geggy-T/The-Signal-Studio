@@ -19,6 +19,8 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const UPLOAD_URL =
   "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status";
 const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
+const CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels";
+const PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems";
 
 export type Privacy = "private" | "unlisted" | "public";
 
@@ -309,6 +311,106 @@ export async function getVideoStatuses(videoIds: string[], creds?: YtCreds | nul
       });
     }
   }
+  return out;
+}
+
+export interface ScheduledVideo {
+  id: string;
+  title: string;
+  publishAt: string; // future ISO scheduled release
+  privacyStatus: string;
+  thumbnail: string | null;
+}
+
+/**
+ * Enumerate the channel's OWN upcoming scheduled uploads straight from YouTube:
+ * private/unlisted videos whose publishAt is in the future. This is the true source
+ * of truth for the Studio Scheduled page — it does NOT depend on our local render
+ * rows, so it still finds videos whose local records were purged (48h library
+ * cleanup) or were never recorded. Scans the most recent `scan` uploads (default 120).
+ */
+export async function listScheduled(creds?: YtCreds | null, scan = 120): Promise<ScheduledVideo[]> {
+  const accessToken = await getAccessToken(creds);
+
+  // 1) Resolve the channel's uploads playlist.
+  const chRes = await fetch(`${CHANNELS_URL}?part=contentDetails&mine=true`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!chRes.ok) {
+    const t = await chRes.text().catch(() => "");
+    throw new Error(`YouTube channels.list ${chRes.status}: ${t.slice(0, 300)}`);
+  }
+  const chJson = (await chRes.json()) as {
+    items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }>;
+  };
+  const uploads = chJson.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+  if (!uploads) return [];
+
+  // 2) Page through the most recent uploads to collect video ids.
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  while (ids.length < scan) {
+    const url = new URL(PLAYLIST_ITEMS_URL);
+    url.searchParams.set("part", "contentDetails");
+    url.searchParams.set("playlistId", uploads);
+    url.searchParams.set("maxResults", "50");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const plRes = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!plRes.ok) {
+      const t = await plRes.text().catch(() => "");
+      throw new Error(`YouTube playlistItems.list ${plRes.status}: ${t.slice(0, 300)}`);
+    }
+    const plJson = (await plRes.json()) as {
+      items?: Array<{ contentDetails?: { videoId?: string } }>;
+      nextPageToken?: string;
+    };
+    for (const it of plJson.items ?? []) {
+      const vid = it.contentDetails?.videoId;
+      if (vid) ids.push(vid);
+    }
+    if (!plJson.nextPageToken) break;
+    pageToken = plJson.nextPageToken;
+  }
+  if (!ids.length) return [];
+
+  // 3) Read status+snippet; keep only videos with a FUTURE publishAt.
+  const out: ScheduledVideo[] = [];
+  const now = Date.now();
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await fetch(
+      `${VIDEOS_URL}?part=status,snippet&id=${batch.map(encodeURIComponent).join(",")}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`YouTube videos.list ${res.status}: ${t.slice(0, 300)}`);
+    }
+    const json = (await res.json()) as {
+      items?: Array<{
+        id?: string;
+        snippet?: { title?: string; thumbnails?: Record<string, { url?: string }> };
+        status?: { privacyStatus?: string; publishAt?: string };
+      }>;
+    };
+    for (const it of json.items ?? []) {
+      const publishAt = it.status?.publishAt;
+      if (!it.id || !publishAt) continue;
+      if (!(Date.parse(publishAt) > now)) continue; // future schedules only
+      const th = it.snippet?.thumbnails;
+      const thumbnail = th?.medium?.url ?? th?.default?.url ?? th?.high?.url ?? null;
+      out.push({
+        id: it.id,
+        title: it.snippet?.title ?? "",
+        publishAt,
+        privacyStatus: it.status?.privacyStatus ?? "private",
+        thumbnail,
+      });
+    }
+  }
+  out.sort((a, b) => Date.parse(a.publishAt) - Date.parse(b.publishAt));
   return out;
 }
 

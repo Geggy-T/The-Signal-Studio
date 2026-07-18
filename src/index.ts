@@ -20,7 +20,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final64-anchored-interjections";
+const BUILD = "final65-yt-schedule-enum";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -263,6 +263,29 @@ app.post("/youtube/status", async (req, res) => {
   } catch (err: unknown) {
     const msg = (err as Error)?.message || String(err);
     console.error("[youtube/status] failed", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * Enumerate the channel's OWN upcoming scheduled uploads directly from YouTube
+ * (private/unlisted videos with a future publishAt). This is the source of truth for
+ * the Studio Scheduled page — independent of our local records, so it still finds
+ * videos whose local rows were purged (48h cleanup) or never recorded.
+ * Body: { credentials? }  ->  { scheduled: [{id, title, publishAt, privacyStatus, thumbnail}], count }
+ */
+app.post("/youtube/scheduled", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const { credentials } = req.body ?? {};
+  if (!youtube.isConfigured(credentials)) {
+    return res.status(503).json({ error: "YouTube not configured (no credentials and YT_* env missing)" });
+  }
+  try {
+    const scheduled = await youtube.listScheduled(credentials);
+    res.json({ scheduled, count: scheduled.length });
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || String(err);
+    console.error("[youtube/scheduled] failed", msg);
     res.status(500).json({ error: msg });
   }
 });
