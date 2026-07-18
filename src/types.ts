@@ -391,7 +391,8 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   if (hasTeaser) {
     // 3-BEAT COLD OPEN (how a human edits it): brand frame -> hand-picked DRAMATIC line
     // live -> Matt's hook. No four-second talking-head setup.
-    const FRAME_HOLD = 1.2; // Beat 1: brand frame + hook_words, held ~1.2s, no VO.
+    const FRAME_HOLD = 0.5; // Beat 1: brand frame + hook_words, ~0.5s — in the feed it's
+    // already the thumbnail, so a longer hold just delays the payoff and feels off.
     items.push({ kind: "insert", freezeSec: peak, durSec: FRAME_HOLD, url: null, text: "" });
 
     // Beat 2: the hand-picked dramatic line, LIVE (real source audio). Clamp so it stays
