@@ -148,9 +148,12 @@ export const TAKEAWAY_SECONDS = 5;
 // Minimum card lengths + a little breathing room after Matt stops speaking.
 export const MIN_HOOK_SECONDS = 2.5;
 export const MIN_TAKEAWAY_SECONDS = 3;
-export const SEGMENT_PAD = 0.6;
+// TIGHT CUTS. These pads are added AFTER the measured audio length, so they only exist
+// to stop the tail being clipped — anything beyond that is dead air, and dead air is
+// what makes an edit feel slow. Kept deliberately small.
+export const SEGMENT_PAD = 0.35;
 // A short breath after the speaker's last word before Matt's closing takeaway VO.
-export const TAKEAWAY_LEAD_SECONDS = 0.6;
+export const TAKEAWAY_LEAD_SECONDS = 0.35;
 
 /**
  * Segment lengths, driven by the MEASURED audio durations so nothing gets cut off.
@@ -188,6 +191,10 @@ export interface TimelineItem {
   freezeSec?: number;
   url?: string | null;
   text?: string;
+  // True only for the subliminal opening brand flash. It is technically an "insert" but
+  // it is NOT Matt speaking, so it must not fire the whoosh (otherwise you get two
+  // whooshes 0.13s apart). The whoosh belongs to Matt's cards.
+  flash?: boolean;
 }
 
 /**
@@ -369,7 +376,10 @@ function snapForwardToBoundary(spec: RenderSpec, rel: number): number {
 
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
   const C = Math.max(1, spec.t_out - spec.t_in);
-  const INSERT_PAD = 0.5;
+  // TIGHT CUTS: added on top of Matt's MEASURED audio length, so this is purely the tail
+  // guard against clipping his last word. Anything more is dead air on every single
+  // interjection — the fastest way to make an edit feel sluggish.
+  const INSERT_PAD = 0.2;
   const takeawayLen = Math.max(
     MIN_TAKEAWAY_SECONDS,
     (spec.audio.takeaway_duration_s ?? TAKEAWAY_SECONDS) + SEGMENT_PAD + TAKEAWAY_LEAD_SECONDS
@@ -387,32 +397,51 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   const tStart = spec.teaser_start_sec;
   const tEnd = spec.teaser_end_sec;
   const hasTeaser = tStart != null && tEnd != null && tEnd > tStart;
+  // Where the main body starts after the cold open. Normally 0 (play the clip from the
+  // top), but the v2 cold open can roll straight on from the end of the teaser instead.
+  let bodyStart = 0;
 
   if (hasTeaser) {
-    // 3-BEAT COLD OPEN (how a human edits it): brand frame -> hand-picked DRAMATIC line
-    // live -> Matt's hook. No four-second talking-head setup.
-    const FRAME_HOLD = 0.5; // Beat 1: brand frame + hook_words, ~0.5s — in the feed it's
-    // already the thumbnail, so a longer hold just delays the payoff and feels off.
-    items.push({ kind: "insert", freezeSec: peak, durSec: FRAME_HOLD, url: null, text: "" });
+    // COLD OPEN v2 — instant validation. Every Short worth copying goes STRAIGHT into
+    // content, so:
+    //   Beat 1 (~0.13s) a subliminal brand flash — present in the file (and so usable as
+    //          the auto thumbnail) but far too short to register as a hold.
+    //   Beat 2  Matt's punchy claim, over a FROZEN frame of the money line's FIRST frame.
+    //   Beat 3  that freeze RELEASES into the money line playing live — the receipt for
+    //          Matt's claim, arriving within ~2s. Curiosity opened, then instantly paid.
+    const FRAME_FLASH = 4 / FPS; // 4 frames
+    items.push({ kind: "insert", freezeSec: peak, durSec: FRAME_FLASH, url: null, text: "", flash: true });
 
-    // Beat 2: the hand-picked dramatic line, LIVE (real source audio). Clamp so it stays
-    // a punchy teaser (never a long run) and stays inside the clip window.
     const ts = Math.max(0, Math.min(C - 0.3, tStart));
     let te = Math.max(ts + 0.6, Math.min(C - 0.1, tEnd));
     if (te - ts > 3.2) te = ts + 3.2;
-    items.push({ kind: "source", startSec: ts, endSec: te, durSec: te - ts });
 
-    // Beat 3: Matt freezes the moment and lands his short hook.
+    // Beat 2: freeze on ts (not te) so the cut to live footage is a seamless UNFREEZE of
+    // the very frame Matt was talking over, rather than a jump to somewhere else.
     if (hasHook) {
-      const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
+      // Tight tail (not the usual INSERT_PAD): we want the freeze to release on Matt's
+      // LAST WORD, so the proof lands the instant he stops. Half a second of dead air
+      // here is the difference between "instant validation" and a beat of nothing.
+      const HOOK_TAIL = 0.15;
+      const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + HOOK_TAIL;
       items.push({
         kind: "insert",
-        freezeSec: te,
+        freezeSec: ts,
         durSec: hookDur,
         url: spec.audio.hook_url ?? null,
         text: spec.hook_text || spec.title,
       });
     }
+
+    // Beat 3: the money line, LIVE.
+    items.push({ kind: "source", startSec: ts, endSec: te, durSec: te - ts });
+
+    // Beat 4: if the money line sits at the clip's opening (the selection step aims for
+    // this), just keep ROLLING FORWARD from where the teaser ended — no rewind, no repeat,
+    // no momentum dip. If the line is buried deep in the clip, fall back to the
+    // flash-forward: replay from the top so the viewer still gets the build-up.
+    const CONTINUOUS_MAX = 3;
+    bodyStart = ts <= CONTINUOUS_MAX ? te : 0;
   } else if (hasHook) {
     // Legacy single-beat opener (frame + VO together) — old specs with no teaser fields.
     const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
@@ -508,8 +537,13 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   }
 
   // 3) Interleave clean source segments with the reaction inserts, then the takeaway.
-  let cursor = 0;
+  //    cursor starts at bodyStart: the v2 cold open may have already carried the viewer
+  //    past the money line, in which case we roll on from there instead of rewinding.
+  let cursor = bodyStart;
   for (const r of valid) {
+    // Drop any reaction that sits before where the body actually begins — it either
+    // already played inside the cold open or was skipped over by it.
+    if (r.at <= cursor + 0.8) continue;
     if (r.at > cursor + 0.05) {
       items.push({ kind: "source", startSec: cursor, endSec: r.at, durSec: r.at - cursor });
     }

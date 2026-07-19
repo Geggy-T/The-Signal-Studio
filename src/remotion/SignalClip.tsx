@@ -521,8 +521,10 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
             return (
               <Series.Sequence key={i} durationInFrames={frames}>
                 <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} isOpening={i === 0} />
-                {/* Whoosh+click at the cut to Matt — the "something happened" jolt. */}
-                <Audio src={CUT_SFX} volume={SFX_VOLUME} />
+                {/* Whoosh+click on EVERY Matt card — the "something happened" jolt.
+                    Skipped on the subliminal brand flash, which isn't Matt speaking
+                    (otherwise it double-whooshes 0.13s before his opening line). */}
+                {it.flash ? null : <Audio src={CUT_SFX} volume={SFX_VOLUME} />}
                 {it.url ? <Audio src={it.url} volume={MATT_VOLUME} /> : null}
               </Series.Sequence>
             );
