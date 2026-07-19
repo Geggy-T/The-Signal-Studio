@@ -443,6 +443,37 @@ function snapTeaserEnd(spec: RenderSpec, startSec: number, endSec: number, maxSe
   return Math.min(Math.max(endSec, startSec + 0.6), hardMax);
 }
 
+/**
+ * The body must not START mid-sentence. We fixed the teaser's END landing mid-word;
+ * this is the mirror problem at the hand-over. When the cold open finishes (or when we
+ * flash-forward back to the top of the clip), dropping in halfway through a spoken
+ * sentence reads as a bad edit — the selection can only bias where t_in lands, it
+ * can't guarantee a sentence boundary. So: snap forward to the first word that BEGINS
+ * a sentence, within a short window. Losing a fragment of a half-heard sentence is
+ * always better than entering on one.
+ */
+function snapBodyStart(spec: RenderSpec, startSec: number): number {
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const words = spec.captions;
+  if (!words.length) return startSec;
+  const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
+  const abs = spec.t_in + startSec;
+  const WINDOW = 3.5; // never skip more than this hunting for a clean entry
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w.start < abs - 0.05) continue;
+    const rel = w.start - spec.t_in;
+    if (rel - startSec > WINDOW) break;
+    const prev = words[i - 1];
+    // A word begins a sentence if it is the first word, or the previous word ended one.
+    if (!prev || endsSentence(prev.text)) {
+      // Small lead-in so we don't clip the attack of the first syllable.
+      return Math.max(0, Math.min(C - 0.5, rel - 0.08));
+    }
+  }
+  return startSec;
+}
+
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
   const C = Math.max(1, spec.t_out - spec.t_in);
   // TIGHT CUTS: added on top of Matt's MEASURED audio length, so this is purely the tail
@@ -526,6 +557,11 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
       text: spec.hook_text || spec.title,
     });
   }
+
+  // The body (the beat AFTER the cold open) must never open mid-sentence. This covers
+  // both hand-over paths: rolling on from the teaser, and flash-forwarding back to the
+  // top of the clip where t_in may land anywhere.
+  bodyStart = snapBodyStart(spec, bodyStart);
 
   // 2) REACTIONS — MEANING-ANCHORED. The commentary step picks the exact spoken line
   //    each take reacts to (after_quote); we cut in right AFTER that line. Count is
