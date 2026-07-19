@@ -8,6 +8,7 @@ import { ensureBrowser, renderMedia, renderStill, selectComposition } from "@rem
 import { parseBuffer } from "music-metadata";
 import { buildTimeline, FPS, type RenderSpec } from "./types.js";
 import { putToSignedUrl, uploadWithServiceRole } from "./supabase.js";
+import { qcRenderedClip, type QcReport } from "./qc.js";
 import { SERVE_DIR } from "./serve.js";
 import * as youtube from "./youtube.js";
 
@@ -281,11 +282,41 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
     thumbnail_path = await uploadWithServiceRole(`clips/${id}.jpeg`, thumb, "image/jpeg");
   }
 
+  // ---------------------------------------------------------------------------
+  // OUTPUT QC — runs AFTER the file is safely in storage, BEFORE we publish.
+  // A blocking defect means the clip is kept (so it can be inspected) but NOT
+  // published. This is what lets the pipeline run unattended: up to now every
+  // quality bug was caught by a human watching the output.
+  // ---------------------------------------------------------------------------
+  let qc: QcReport | null = null;
+  try {
+    const { totalSec } = buildTimeline(spec);
+    qc = await qcRenderedClip(spec, outFile, totalSec);
+    if (qc.issues.length) {
+      for (const i of qc.issues) {
+        const line = `[qc] ${i.severity.toUpperCase()} ${i.code}: ${i.detail}`;
+        if (i.severity === "block") console.error(line);
+        else console.warn(line);
+      }
+    } else {
+      console.log("[qc] clean");
+    }
+    console.log(`[qc] metrics ${JSON.stringify(qc.metrics)}`);
+  } catch (e) {
+    // QC must never cost us a finished render.
+    console.warn("[qc] check failed, allowing publish:", (e as Error)?.message);
+    qc = null;
+  }
+
   // Optional: auto-upload to YouTube (Unlisted by default). Never fails the render —
   // the clip is already safely in Supabase; a YouTube hiccup is reported, not fatal.
   let youtube_video_id: string | undefined;
   let youtube_error: string | undefined;
-  if (spec.publish && youtube.isConfigured(spec.publish.credentials)) {
+  if (qc?.blocked) {
+    const codes = qc.issues.filter((i) => i.severity === "block").map((i) => i.code).join(", ");
+    youtube_error = `blocked by output QC: ${codes}`;
+    console.error(`[qc] PUBLISH BLOCKED (${codes}) — clip stored for review, not uploaded`);
+  } else if (spec.publish && youtube.isConfigured(spec.publish.credentials)) {
     try {
       const scheduleAt =
         spec.publish.publish_at && Date.parse(spec.publish.publish_at) > Date.now()
