@@ -374,6 +374,75 @@ function snapForwardToBoundary(spec: RenderSpec, rel: number): number {
   return rel;
 }
 
+/**
+ * The cold-open teaser MUST end on a complete thought. Two things used to break that:
+ * the Studio resolves the span from the matched quote words (the quote is only 4-8 words
+ * while the spoken line usually runs longer, so it stopped mid-sentence), and a hard cap
+ * chopped anything longer outright. Both produce a harsh cut into the next beat.
+ * So: extend forward to the next sentence end, else a real pause, never mid-word, never
+ * past the allowance, and never let the tail run into the following word.
+ */
+function snapTeaserEnd(spec: RenderSpec, startSec: number, endSec: number, maxSec: number): number {
+  const C = Math.max(1, spec.t_out - spec.t_in);
+  const words = spec.captions;
+  const hardMax = Math.min(C - 0.1, startSec + maxSec);
+  if (!words.length) return Math.min(Math.max(endSec, startSec + 0.6), hardMax);
+
+  const endsSentence = (t: string) => /[.!?]["')\]]?$/.test((t || "").trim());
+  const absEnd = spec.t_in + endSec;
+  const TAIL = 0.18;
+  // Tail must never reach the next word, or its first syllable flashes before the cut.
+  const tailFor = (idx: number, wordEnd: number): number => {
+    const nextStart = words[idx + 1]?.start;
+    if (nextStart == null) return TAIL;
+    return Math.min(TAIL, Math.max(0, nextStart - wordEnd - 0.04));
+  };
+
+  // 1) Best: the next completed sentence at/after the quote end, within the allowance.
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w.end < absEnd - 0.05) continue;
+    const rel = w.end - spec.t_in;
+    if (rel > hardMax) break;
+    if (endsSentence(w.text)) return Math.min(hardMax, rel + tailFor(i, w.end));
+  }
+
+  // 2) Otherwise the largest REAL pause (>=0.35s) in the allowance — a natural breath.
+  let bestIdx = -1;
+  let bestGap = 0;
+  for (let i = 0; i < words.length - 1; i++) {
+    const w = words[i];
+    if (w.end < absEnd - 0.05) continue;
+    const rel = w.end - spec.t_in;
+    if (rel > hardMax) break;
+    const gap = words[i + 1].start - w.end;
+    if (gap > bestGap) {
+      bestGap = gap;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx !== -1 && bestGap >= 0.35) {
+    const w = words[bestIdx];
+    return Math.min(hardMax, w.end - spec.t_in + tailFor(bestIdx, w.end));
+  }
+
+  // 3) Fallback: end of the word we are currently inside — never mid-word.
+  let lastIdx = -1;
+  for (let i = 0; i < words.length; i++) {
+    const rel = words[i].end - spec.t_in;
+    if (rel > hardMax) break;
+    if (words[i].end >= absEnd - 0.05) {
+      lastIdx = i;
+      break;
+    }
+  }
+  if (lastIdx >= 0) {
+    const w = words[lastIdx];
+    return Math.min(hardMax, w.end - spec.t_in + tailFor(lastIdx, w.end));
+  }
+  return Math.min(Math.max(endSec, startSec + 0.6), hardMax);
+}
+
 export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalSec: number } {
   const C = Math.max(1, spec.t_out - spec.t_in);
   // TIGHT CUTS: added on top of Matt's MEASURED audio length, so this is purely the tail
@@ -413,8 +482,12 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     items.push({ kind: "insert", freezeSec: peak, durSec: FRAME_FLASH, url: null, text: "", flash: true });
 
     const ts = Math.max(0, Math.min(C - 0.3, tStart));
+    // Let the line FINISH. The old hard 3.2s truncation cut lines mid-sentence, which is
+    // what made the cut into the next beat feel harsh. We now allow up to 5s and snap to
+    // the nearest sentence end / real pause inside that.
+    const MAX_TEASER = 5.0;
     let te = Math.max(ts + 0.6, Math.min(C - 0.1, tEnd));
-    if (te - ts > 3.2) te = ts + 3.2;
+    te = snapTeaserEnd(spec, ts, te, MAX_TEASER);
 
     // Beat 2: freeze on ts (not te) so the cut to live footage is a seamless UNFREEZE of
     // the very frame Matt was talking over, rather than a jump to somewhere else.
