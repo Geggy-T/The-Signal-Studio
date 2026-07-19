@@ -195,6 +195,10 @@ export interface TimelineItem {
   // it is NOT Matt speaking, so it must not fire the whoosh (otherwise you get two
   // whooshes 0.13s apart). The whoosh belongs to Matt's cards.
   flash?: boolean;
+  // The LOOP frame: the final beat, rendered identically to the opening frame so the
+  // last frame matches the first. Shorts replay automatically, and ending on a static
+  // card makes the loop land as a hard mismatch; matching frames make it seamless.
+  loop?: boolean;
 }
 
 /**
@@ -669,6 +673,14 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     }
   }
   items.push({ kind: "takeaway", durSec: takeawayLen });
+
+  // LOOP FRAME — the proven Shorts structure ends by flowing back into the first frame.
+  // Shorts auto-replay, so finishing on a static takeaway card makes the loop land as a
+  // hard visual mismatch and reads as "the end". Holding the SAME frame we opened on for
+  // a beat makes the replay a match cut instead. No VO, no whoosh.
+  if (hasTeaser) {
+    items.push({ kind: "insert", freezeSec: peak, durSec: 0.5, url: null, text: "", flash: true, loop: true });
+  }
 
   const totalSec = items.reduce((a, i) => a + i.durSec, 0);
   return { items, totalSec };

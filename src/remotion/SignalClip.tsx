@@ -197,7 +197,21 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
   // near-static; this constant drift keeps the frame alive and fights mid-clip
   // scroll-off. Resets each segment, so every cut gives a fresh motion beat.
   const frame = useCurrentFrame();
-  const zoom = 1 + Math.min(0.06, (frame / FPS) * 0.006);
+  // PACING — the body used to be one continuous static shot with a slow drift, which
+  // gave a 60s clip about four visual changes. The proven structure wants a visible
+  // reframe on a regular beat. We use 5s: retention data has 5-7s changes holding 80%+
+  // while 2-4s often drops below 70% — 2-4s suits fast entertainment, not talking heads.
+  // We can't honestly jump-cut a single speaker, so we alternate framing (wide <-> tight,
+  // slightly repositioned) which reads as a new shot without fabricating a cut.
+  const REFRAME_EVERY = 5;
+  const tSec = frame / FPS;
+  const beat = Math.floor(tSec / REFRAME_EVERY);
+  const tight = beat % 2 === 1;
+  const withinBeat = tSec % REFRAME_EVERY;
+  // Slow drift inside each beat so the frame is never dead still between reframes.
+  const drift = Math.min(0.05, withinBeat * 0.005);
+  const zoom = (tight ? 1.14 : 1.0) + drift;
+  const shiftYpct = tight ? -2.5 : 0;
   return (
     <AbsoluteFill style={{ backgroundColor: spec.brand.bg }}>
       {/* Blurred, darkened copy fills the frame so the 16:9 clip never sits in black
@@ -239,7 +253,7 @@ const SourceSegment: React.FC<{ spec: RenderSpec; startSec: number; endSec: numb
           width: "100%",
           height: "100%",
           objectFit: "contain",
-          transform: `scale(${zoom})`,
+          transform: `scale(${zoom}) translateY(${shiftYpct}%)`,
           transformOrigin: "center",
         }}
       />
@@ -520,7 +534,10 @@ export const SignalClip: React.FC<{ spec: RenderSpec }> = ({ spec }) => {
           if (it.kind === "insert") {
             return (
               <Series.Sequence key={i} durationInFrames={frames}>
-                <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} isOpening={i === 0} />
+                {/* The loop frame renders identically to the opening frame (isOpening),
+                    so the last frame of the video matches the first and the auto-replay
+                    is a match cut rather than a jarring reset. */}
+                <MattInsert spec={spec} freezeSec={spec.t_in + (it.freezeSec ?? 0)} text={it.text ?? ""} isOpening={i === 0 || !!it.loop} />
                 {/* Whoosh+click on EVERY Matt card — the "something happened" jolt.
                     Skipped on the subliminal brand flash, which isn't Matt speaking
                     (otherwise it double-whooshes 0.13s before his opening line). */}
