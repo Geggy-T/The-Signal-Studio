@@ -30,7 +30,7 @@ const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final83-endplate-qc";
+const BUILD = "final84-video-meta";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)
@@ -389,6 +389,38 @@ app.post("/youtube/status", async (req, res) => {
   } catch (err: unknown) {
     const msg = (err as Error)?.message || String(err);
     console.error("[youtube/status] failed", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+/**
+ * Metadata (duration, views, title, uploader) for ARBITRARY public video ids.
+ *
+ * The harvester enumerates watchlist channels over public RSS, which carries neither
+ * duration nor view count — so since the RSS switch every harvested row has shown "—"
+ * for length, leaving the operator picking blind and making a minimum-length supply
+ * filter impossible. This endpoint restores both. 50 ids per upstream call, 1 quota
+ * unit each, so a full harvest run costs a handful of units.
+ *
+ * Body: { video_ids: string[], credentials? }
+ *   -> { meta: [{id, title, channel_title, published_at, duration_s, views, thumbnail, is_short}], requested }
+ */
+app.post("/youtube/meta", async (req, res) => {
+  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  const { credentials } = req.body ?? {};
+  if (!youtube.isConfigured(credentials)) {
+    return res.status(503).json({ error: "YouTube not configured (no credentials and YT_* env missing)" });
+  }
+  const raw = (req.body?.video_ids ?? []) as unknown[];
+  const ids = Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: "video_ids[] required" });
+  try {
+    const meta = await youtube.getVideoMeta(ids, credentials);
+    console.log(`[youtube/meta] ${meta.length}/${ids.length} resolved, ${meta.filter((m) => m.is_short).length} are Shorts (<=180s)`);
+    res.json({ meta, requested: ids.length });
+  } catch (err: unknown) {
+    const msg = (err as Error)?.message || String(err);
+    console.error("[youtube/meta] failed", msg);
     res.status(500).json({ error: msg });
   }
 });

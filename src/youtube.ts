@@ -314,6 +314,87 @@ export async function getVideoStatuses(videoIds: string[], creds?: YtCreds | nul
   return out;
 }
 
+/** Parse an ISO-8601 duration ("PT1H17M10S") to seconds. */
+export function parseIsoDuration(iso: string): number | null {
+  const m = /^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/.exec(iso || "");
+  if (!m) return null;
+  const [, d, h, mi, s] = m;
+  const total =
+    (Number(d) || 0) * 86400 + (Number(h) || 0) * 3600 + (Number(mi) || 0) * 60 + (Number(s) || 0);
+  return Number.isFinite(total) && total > 0 ? total : null;
+}
+
+export interface VideoMeta {
+  id: string;
+  title: string;
+  channel_title: string;
+  published_at: string | null;
+  duration_s: number | null;
+  views: number | null;
+  thumbnail: string | null;
+  is_short: boolean; // <= 180s: almost certainly a Short / clip, not source material
+}
+
+/**
+ * Metadata for ARBITRARY public videos (not just our own channel) — duration, views,
+ * title, uploader.
+ *
+ * WHY THIS EXISTS: the harvester enumerates watchlist channels over public RSS, which
+ * carries NO duration and NO view count. Before RSS we used yt-dlp, which did. So when
+ * yt-dlp was replaced (it was IP-blocked on Railway), duration silently disappeared
+ * from every harvested row — the Studio has shown "—" since 19 July, leaving the
+ * operator picking blind, and making a minimum-length supply filter impossible.
+ *
+ * videos.list costs 1 quota unit per call and takes 50 ids at a time, so enriching a
+ * whole harvest run is 2-4 units. There is no reason not to do it.
+ */
+export async function getVideoMeta(videoIds: string[], creds?: YtCreds | null): Promise<VideoMeta[]> {
+  const ids = [...new Set(videoIds.filter(Boolean))];
+  if (!ids.length) return [];
+  const accessToken = await getAccessToken(creds);
+  const out: VideoMeta[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await fetch(
+      `${VIDEOS_URL}?part=contentDetails,statistics,snippet&id=${batch.map(encodeURIComponent).join(",")}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`YouTube videos.list ${res.status}: ${t.slice(0, 300)}`);
+    }
+    const json = (await res.json()) as {
+      items?: Array<{
+        id?: string;
+        snippet?: {
+          title?: string;
+          channelTitle?: string;
+          publishedAt?: string;
+          thumbnails?: Record<string, { url?: string }>;
+        };
+        contentDetails?: { duration?: string };
+        statistics?: { viewCount?: string };
+      }>;
+    };
+    for (const it of json.items ?? []) {
+      if (!it.id) continue;
+      const duration_s = parseIsoDuration(it.contentDetails?.duration ?? "");
+      const th = it.snippet?.thumbnails;
+      out.push({
+        id: it.id,
+        title: it.snippet?.title ?? "",
+        channel_title: it.snippet?.channelTitle ?? "",
+        published_at: it.snippet?.publishedAt ?? null,
+        duration_s,
+        views: it.statistics?.viewCount != null ? Number(it.statistics.viewCount) : null,
+        thumbnail: th?.medium?.url ?? th?.high?.url ?? th?.default?.url ?? null,
+        is_short: duration_s != null && duration_s <= 180,
+      });
+    }
+  }
+  return out;
+}
+
 export interface ScheduledVideo {
   id: string;
   title: string;
