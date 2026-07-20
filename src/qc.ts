@@ -76,6 +76,35 @@ export async function qcRenderedClip(
   // ---------------------------------------------------------------------
   // 1) SPEC CHECKS — no ffmpeg needed, uses the durations we already measured.
   // ---------------------------------------------------------------------
+  // Hook sanity. The hook is the whole retention mechanism: it is the first thing
+  // spoken AND the first thing on screen. A hook that has been truncated mid-clause
+  // ("...it's the.") reads as broken software and gets said out loud by the voice.
+  // This shipped for days because nothing asserted it.
+  const hook = String(spec.hook_text ?? "").trim();
+  if (hook) {
+    const hookWords = hook.split(/\s+/).filter(Boolean);
+    metrics.hook_words = hookWords.length;
+    const last = (hookWords[hookWords.length - 1] || "").replace(/[.!?"')\]]+$/, "").toLowerCase();
+    const DANGLING = new Set([
+      "a", "an", "the", "is", "are", "was", "were", "to", "of", "and", "but", "or",
+      "that", "this", "in", "on", "for", "with", "its", "it's", "isn't", "aren't",
+      "will", "be", "been", "from", "at", "as", "than", "into", "about",
+    ]);
+    if (DANGLING.has(last)) {
+      issues.push({
+        code: "hook_truncated",
+        severity: "block",
+        detail: `hook ends on "${last}" — truncated mid-clause: "${hook}"`,
+      });
+    } else if (!/[.!?]["')\]]?$/.test(hook)) {
+      issues.push({
+        code: "hook_unterminated",
+        severity: "warn",
+        detail: `hook has no terminal punctuation: "${hook}"`,
+      });
+    }
+  }
+
   const vos: Array<{ label: string; text: string; dur: number | null | undefined }> = [
     { label: "hook", text: spec.hook_text || "", dur: spec.audio.hook_duration_s },
     { label: "takeaway", text: spec.takeaway_text || "", dur: spec.audio.takeaway_duration_s },

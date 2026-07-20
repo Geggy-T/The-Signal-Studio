@@ -672,6 +672,46 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 2b) DURATION BUDGET — the worker owns final length, because only the worker
+  //     knows every piece that goes into it.
+  //
+  //     WHY THIS EXISTS: we previously tried to hit a target length by tuning the
+  //     Studio's SOURCE-WINDOW constants, on the assumption that the format added
+  //     ~9.5s of furniture on top. That assumption ignored interjections entirely.
+  //     Measured reality on a real clip: a 51.3s window rendered to 75.6s — 24.3s of
+  //     furniture, because 4-5 reaction cards at ~3.5s each are the single largest
+  //     component. Guessing constants upstream cannot work: the Studio does not know
+  //     how many reactions will resolve to a landing spot, so it cannot know the total.
+  //
+  //     So the budget is enforced HERE, where every duration is already known.
+  const TARGET_TOTAL = 52;
+  const HARD_TOTAL = 60; // Shorts hard ceiling; never exceed
+  const loopSec = hasTeaser ? 0.5 : 0;
+  const openingSec = items.reduce((a, i) => a + i.durSec, 0); // flash + hook + teaser
+  const fixedSec = openingSec + takeawayLen + loopSec;
+  // What is left for body footage + reaction cards.
+  const bodyBudget = Math.max(8, TARGET_TOTAL - fixedSec);
+
+  // Keep reactions only while they leave room for real speaker footage. A clip that is
+  // mostly Matt cards is a worse clip — the source IS the substance.
+  const MIN_SPEAKER = 12;
+  const budgeted: R[] = [];
+  let insertCost = 0;
+  for (const r of valid) {
+    if (insertCost + r.dur > Math.max(0, bodyBudget - MIN_SPEAKER)) break;
+    budgeted.push(r);
+    insertCost += r.dur;
+  }
+  // Spend against the budget as we go, using what is ACTUALLY placed rather than what
+  // was reserved. Reactions get dropped downstream (too close to the body start, too
+  // close to each other, inside the skipped teaser span), and reserving for cards that
+  // never land would silently cut the clip short — losing watch time for nothing.
+  let usedSource = 0;
+  let placedInserts = 0;
+  const remainingBudget = (): number =>
+    Math.max(0, TARGET_TOTAL - fixedSec - placedInserts - usedSource);
+
   // 3) Interleave clean source segments with the reaction inserts, then the takeaway.
   //    cursor starts at bodyStart: the v2 cold open may have already carried the viewer
   //    past the money line, in which case we roll on from there instead of rewinding.
@@ -681,7 +721,10 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   const MIN_RUN = 0.25;
   const pushSource = (from: number, to: number): void => {
     const emit = (a: number, b: number) => {
-      if (b - a >= MIN_RUN) items.push({ kind: "source", startSec: a, endSec: b, durSec: b - a });
+      if (b - a >= MIN_RUN) {
+        items.push({ kind: "source", startSec: a, endSec: b, durSec: b - a });
+        usedSource += b - a;
+      }
     };
     if (skipFrom == null || skipTo == null || to <= skipFrom || from >= skipTo) {
       emit(from, to);
@@ -697,17 +740,40 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     skipFrom != null && skipTo != null && t > skipFrom && t < skipTo ? skipTo : t;
 
   let cursor = bodyStart;
-  for (const r of valid) {
+  for (const r of budgeted) {
     const at = afterSkip(r.at);
     // Drop any reaction that sits before where the body actually begins — it either
     // already played inside the cold open or was skipped over by it.
     if (at <= cursor + 0.8) continue;
-    if (at > cursor + 0.05) pushSource(cursor, at);
+    // No room left for this gap AND the card that follows it: stop and close cleanly.
+    if (remainingBudget() < r.dur + 2) break;
+    if (at > cursor + 0.05) {
+      // Never let one gap eat the whole budget: leave room for the card itself.
+      const capped = Math.min(at, cursor + Math.max(0, remainingBudget() - r.dur));
+      if (capped > cursor + 0.05) pushSource(cursor, capped);
+      if (capped < at) {
+        cursor = capped;
+        break; // budget exhausted mid-gap; the tail below closes the clip cleanly
+      }
+    }
     items.push({ kind: "insert", freezeSec: at, durSec: r.dur, url: r.url, text: r.text });
+    placedInserts += r.dur;
     cursor = at;
   }
-  if (cursor < C - 0.05) {
-    const endSec = snapClipEnd(spec, cursor);
+  if (cursor < C - 0.05 && remainingBudget() > 1.0) {
+    // Hard ceiling from the budget, then snap DOWN to the last clean sentence end at or
+    // before it — so the clip still finishes on a finished thought rather than a hard
+    // stop mid-sentence. Completeness beats brevity; the budget only decides where we
+    // are allowed to look for that ending.
+    const maxEnd = Math.min(C, cursor + remainingBudget());
+    let endSec = snapClipEnd(spec, cursor);
+    if (endSec > maxEnd) {
+      let best = -1;
+      for (const s of sentenceEnds) {
+        if (s > cursor + 1.0 && s <= maxEnd) best = s;
+      }
+      endSec = best > 0 ? best : maxEnd;
+    }
     // Only render a trailing speaker run if it is a sensible length ending on a clean
     // sentence. If the clean end lands at/near the last take, cut straight to the
     // takeaway rather than flash a fraction of a rolled/unfinished sentence.
@@ -724,5 +790,15 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   }
 
   const totalSec = items.reduce((a, i) => a + i.durSec, 0);
+  if (totalSec > HARD_TOTAL) {
+    // Belt and braces: the budget above should make this unreachable, but a clip that
+    // silently runs long is exactly the defect this whole block exists to stop, so make
+    // it loud rather than let it ship.
+    console.warn(
+      `[timeline] OVER BUDGET: ${totalSec.toFixed(1)}s > ${HARD_TOTAL}s ` +
+        `(opening ${openingSec.toFixed(1)}, source ${usedSource.toFixed(1)}, ` +
+        `inserts ${placedInserts.toFixed(1)}, takeaway ${takeawayLen.toFixed(1)})`
+    );
+  }
   return { items, totalSec };
 }
