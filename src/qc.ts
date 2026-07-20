@@ -129,7 +129,7 @@ export async function qcRenderedClip(
   const probe = await run("ffprobe", [
     "-v", "error",
     "-show_entries", "format=duration",
-    "-show_entries", "stream=codec_type",
+    "-show_entries", "stream=codec_type,width,height",
     "-of", "default=noprint_wrappers=1",
     mp4Path,
   ]);
@@ -147,6 +147,34 @@ export async function qcRenderedClip(
   const actualSec = durMatch ? Number(durMatch[1]) : null;
   metrics.duration_s = actualSec;
   metrics.expected_s = Number(expectedSec.toFixed(2));
+
+  // Output resolution. Shorts is a 1080x1920-native surface; anything smaller means we
+  // handed YouTube an upscaled master and it re-encoded the softness in. This shipped
+  // silently for weeks because the render simply used a 2/3 scale factor and nothing
+  // ever asserted the result — a human eventually noticed the title looked soft.
+  const wMatch = /^width=(\d+)/m.exec(probe.stdout);
+  const hMatch = /^height=(\d+)/m.exec(probe.stdout);
+  const width = wMatch ? Number(wMatch[1]) : null;
+  const height = hMatch ? Number(hMatch[1]) : null;
+  metrics.width = width;
+  metrics.height = height;
+  if (width != null && height != null && width > 0) {
+    if (width < 1080 || height < 1920) {
+      issues.push({
+        code: "low_resolution",
+        severity: "warn",
+        detail: `output is ${width}x${height}, expected 1080x1920 — check RENDER_SCALE`,
+      });
+    }
+    const aspect = height / width;
+    if (Math.abs(aspect - 16 / 9) > 0.02) {
+      issues.push({
+        code: "wrong_aspect",
+        severity: "block",
+        detail: `output aspect ${width}x${height} is not 9:16`,
+      });
+    }
+  }
 
   const hasAudio = /codec_type=audio/.test(probe.stdout);
   const hasVideo = /codec_type=video/.test(probe.stdout);

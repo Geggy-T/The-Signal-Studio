@@ -192,12 +192,25 @@ export async function renderClip(spec: RenderSpec): Promise<RenderResult> {
   // CPU cores WITHIN a single clip. This is SEPARATE from the worker's render-level gate
   // (RENDER_CONCURRENCY in index.ts, which limits how many whole clips render at once).
   // Because the gate serialises clips, each clip can safely use several cores — this is
-  // what turns a ~16min single-core render into a few minutes. Default 4; drop to 2 if
-  // you see OOM, raise if you add RAM.
-  const concurrency = Number(process.env.REMOTION_CONCURRENCY || 4);
-  // Render at 2/3 scale so 1080x1920 becomes 720x1280 — far less encoder memory,
-  // layout/fonts stay proportional automatically. Set RENDER_SCALE=1 once you add RAM.
-  const scale = Number(process.env.RENDER_SCALE || 2 / 3);
+  // what turns a ~16min single-core render into a few minutes.
+  //
+  // MEMORY BUDGET — read this before changing either of the next two constants.
+  // Peak memory scales roughly with (frame area x concurrency). We used to render at
+  // 2/3 scale with concurrency 4; we now render at FULL scale with concurrency 2, which
+  // is close to memory-neutral (1080x1920 is 2.25x the area of 720x1280, so halving the
+  // parallel frames roughly cancels it out). The trade is render TIME, not RAM.
+  //
+  // Why it was worth trading: at 2/3 scale every clip shipped as 720x1280. Shorts is a
+  // 1080x1920-native surface, so we were handing YouTube an already-upscaled master and
+  // letting it re-encode that — softest of all on thin type and stroked text, which is
+  // exactly where a viewer notices. Rendered text is resolution-independent, so full
+  // scale is a real, free-of-artefact quality gain on the titles and captions.
+  //
+  // If you see OOM: set REMOTION_CONCURRENCY=1 first (keeps 1080p, just slower).
+  // Only fall back to RENDER_SCALE=0.667 if that is not enough — that is a visible
+  // quality regression and output QC will now flag it.
+  const concurrency = Number(process.env.REMOTION_CONCURRENCY || 2);
+  const scale = Number(process.env.RENDER_SCALE || 1);
   // Cap Remotion's OffthreadVideo frame cache. In a container Remotion mis-detects
   // available RAM and sizes this cache too large, so on a video-heavy render it grows
   // until the Chrome page thrashes and freezes ("timeout evaluating page function").
