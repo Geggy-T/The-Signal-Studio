@@ -85,8 +85,16 @@ export const RenderSpecSchema = z.object({
       host_name: z.string().nullable().optional(),
       wordmark: z.string().nullable().optional(),
       font: z.string().nullable().optional(),
-      // Per-channel logo (public URL). Rendered top-left every frame. Falls back to
-      // the bundled public/logo.png when absent, so nibs keeps its coral "i" mark.
+      // Per-channel logo, top-left every frame. Resolution order in SignalClip:
+      //   1) logo_file — a file BUNDLED in the worker's public/ dir, e.g.
+      //      "datingis-logo.png". PREFERRED: no network fetch during render, so it
+      //      cannot silently vanish.
+      //   2) logo_url  — an absolute URL. Use only for a host we control. NOT the
+      //      Lovable domain: it returns empty bodies to non-browser clients (the same
+      //      bot protection that broke TikTok domain verification), so Remotion fetches
+      //      nothing and the logo disappears with no error.
+      //   3) the bundled public/logo.png default (the nibs "/nibs." wordmark).
+      logo_file: z.string().nullable().optional(),
       logo_url: z.string().url().nullable().optional(),
     })
     .default({}),

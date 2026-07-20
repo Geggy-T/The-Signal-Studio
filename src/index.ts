@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import express from "express";
 import { RenderSpecSchema } from "./types.js";
 import { renderClip } from "./render.js";
@@ -14,13 +15,22 @@ app.use(express.json({ limit: "5mb" }));
 // Serve pre-cut clip sections over localhost so the renderer reads them fast.
 app.use("/local", express.static(SERVE_DIR));
 
+// Serve the bundled brand assets (logos) publicly. The Lovable-hosted Studio returns
+// EMPTY bodies to non-browser clients, so anything an external service has to fetch —
+// logos included — must be served from here instead. Unauthenticated by design: these
+// are public brand marks.
+app.use(
+  "/assets",
+  express.static(path.join(process.cwd(), "public"), { maxAge: "1h" })
+);
+
 const PORT = Number(process.env.PORT || 8080);
 const WORKER_SECRET = process.env.RENDER_WORKER_SECRET || "";
 
 // Bump this on every worker build. /health echoes it so we can prove which build is
 // actually live (independent of any deploy dashboard). audio_sizecheck=true means the
 // download.ts measured-size audio re-encode (final47+) is present in this build.
-const BUILD = "final79-1080p-no-repeat";
+const BUILD = "final81-logos-1080p";
 
 function authed(req: express.Request): boolean {
   if (!WORKER_SECRET) return true; // allow if unset (local dev)

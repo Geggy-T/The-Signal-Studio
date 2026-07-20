@@ -33,17 +33,32 @@ const fontOf = (spec: RenderSpec): string =>
   spec.brand.font === "bubbly" ? BUBBLY_FONT : FONT;
 const GRADIENT = (bg: string) => `radial-gradient(ellipse at center, #17191c 0%, ${bg} 78%)`;
 
-// Channel logo (top-left, every frame). The coral "i" mark ships as public/logo.png
-// and is loaded via staticFile. Logo-only — no wordmark.
+// Channel logo (top-left, every frame), bundled as public/logo.png and loaded via
+// staticFile. As of final80 this is the FULL "/nibs." wordmark (1200x400, alpha, coral
+// i-dot) rather than the old lone coral "i" — so it is roughly 3:1 rather than 2:1.
+//
+// HEIGHT: a whole wordmark at the same height as a single letter reads much heavier, so
+// the bug is set slightly shorter than the old mark (60 vs 72) to keep the same visual
+// weight in the corner. At 60 it occupies ~180px of a 1080px-wide frame.
+//
+// Bundle per-channel logos here rather than pointing brand.logo_url at the Lovable
+// domain: that host returns empty bodies to non-browser clients (the same bot
+// protection that broke TikTok domain verification), so Remotion fetches nothing and
+// the logo silently disappears.
 const LOGO_SRC = staticFile("logo.png");
+// Prefer a BUNDLED file over a URL: a bundled logo cannot fail to fetch mid-render.
+const logoSrcOf = (spec: RenderSpec): string =>
+  spec.brand.logo_file
+    ? staticFile(spec.brand.logo_file)
+    : spec.brand.logo_url || LOGO_SRC;
 const LogoBug: React.FC<{ spec: RenderSpec }> = ({ spec }) => (
   <Img
-    src={spec.brand.logo_url || LOGO_SRC}
+    src={logoSrcOf(spec)}
     style={{
       position: "absolute",
       top: 52,
       left: 56,
-      height: 72,
+      height: 60,
       width: "auto",
     }}
   />
