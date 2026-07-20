@@ -105,6 +105,25 @@ export async function qcRenderedClip(
     }
   }
 
+  // End plate must actually SAY something before the call to action. The Studio falls
+  // back to a CTA-only takeaway when the generated one fails validation, which ships an
+  // end plate reading just "Tell me in the comments." — a question with no point made,
+  // which is the weakest possible way to end a clip and wastes the loop.
+  const takeaway = String(spec.takeaway_text ?? "").trim();
+  if (takeaway) {
+    const CTA_RE = /tell me in the comments\.?$/i;
+    const body = takeaway.replace(CTA_RE, "").replace(/[.!?,\s]+$/, "").trim();
+    const bodyWords = body.split(/\s+/).filter(Boolean).length;
+    metrics.takeaway_body_words = bodyWords;
+    if (CTA_RE.test(takeaway) && bodyWords < 3) {
+      issues.push({
+        code: "takeaway_cta_only",
+        severity: "block",
+        detail: `end plate has no takeaway, only the CTA: "${takeaway}"`,
+      });
+    }
+  }
+
   const vos: Array<{ label: string; text: string; dur: number | null | undefined }> = [
     { label: "hook", text: spec.hook_text || "", dur: spec.audio.hook_duration_s },
     { label: "takeaway", text: spec.takeaway_text || "", dur: spec.audio.takeaway_duration_s },
