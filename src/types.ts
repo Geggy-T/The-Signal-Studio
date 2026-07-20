@@ -504,6 +504,10 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   // Where the main body starts after the cold open. Normally 0 (play the clip from the
   // top), but the v2 cold open can roll straight on from the end of the teaser instead.
   let bodyStart = 0;
+  // Span of source already spent in the cold-open teaser. When the body rewinds to the
+  // top, this span is skipped on the way through so the money line is never heard twice.
+  let skipFrom: number | null = null;
+  let skipTo: number | null = null;
 
   if (hasTeaser) {
     // COLD OPEN v2 — instant validation. Every Short worth copying goes STRAIGHT into
@@ -549,7 +553,18 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
     // no momentum dip. If the line is buried deep in the clip, fall back to the
     // flash-forward: replay from the top so the viewer still gets the build-up.
     const CONTINUOUS_MAX = 3;
-    bodyStart = ts <= CONTINUOUS_MAX ? te : 0;
+    if (ts <= CONTINUOUS_MAX) {
+      bodyStart = te;
+    } else {
+      // The money line is buried deep, so we DO rewind to give the viewer the build-up.
+      // But the teaser span itself must never play twice: hearing the speaker say the
+      // exact same sentence again a few seconds later reads as a stutter in the edit and
+      // is the single most obvious "this was machine-cut" tell. Play 0 -> ts, then jump
+      // the span we already used and resume at te.
+      bodyStart = 0;
+      skipFrom = ts;
+      skipTo = te;
+    }
   } else if (hasHook) {
     // Legacy single-beat opener (frame + VO together) — old specs with no teaser fields.
     const hookDur = (spec.audio.hook_duration_s ?? HOOK_SECONDS) + INSERT_PAD;
@@ -652,25 +667,43 @@ export function buildTimeline(spec: RenderSpec): { items: TimelineItem[]; totalS
   // 3) Interleave clean source segments with the reaction inserts, then the takeaway.
   //    cursor starts at bodyStart: the v2 cold open may have already carried the viewer
   //    past the money line, in which case we roll on from there instead of rewinding.
+  // Emit a source run, splitting it around the already-played teaser span so that span
+  // is never repeated. Runs shorter than 0.25s after the split are dropped rather than
+  // rendered as a flicker.
+  const MIN_RUN = 0.25;
+  const pushSource = (from: number, to: number): void => {
+    const emit = (a: number, b: number) => {
+      if (b - a >= MIN_RUN) items.push({ kind: "source", startSec: a, endSec: b, durSec: b - a });
+    };
+    if (skipFrom == null || skipTo == null || to <= skipFrom || from >= skipTo) {
+      emit(from, to);
+      return;
+    }
+    emit(from, Math.min(to, skipFrom));
+    emit(Math.max(from, skipTo), to);
+  };
+  // A reaction anchored inside the skipped span has lost its landing spot — the line it
+  // reacts to never plays in the body. Push it to just after the span instead of dropping
+  // it, so we keep the take without it appearing to answer nothing.
+  const afterSkip = (t: number): number =>
+    skipFrom != null && skipTo != null && t > skipFrom && t < skipTo ? skipTo : t;
+
   let cursor = bodyStart;
   for (const r of valid) {
+    const at = afterSkip(r.at);
     // Drop any reaction that sits before where the body actually begins — it either
     // already played inside the cold open or was skipped over by it.
-    if (r.at <= cursor + 0.8) continue;
-    if (r.at > cursor + 0.05) {
-      items.push({ kind: "source", startSec: cursor, endSec: r.at, durSec: r.at - cursor });
-    }
-    items.push({ kind: "insert", freezeSec: r.at, durSec: r.dur, url: r.url, text: r.text });
-    cursor = r.at;
+    if (at <= cursor + 0.8) continue;
+    if (at > cursor + 0.05) pushSource(cursor, at);
+    items.push({ kind: "insert", freezeSec: at, durSec: r.dur, url: r.url, text: r.text });
+    cursor = at;
   }
   if (cursor < C - 0.05) {
     const endSec = snapClipEnd(spec, cursor);
     // Only render a trailing speaker run if it is a sensible length ending on a clean
     // sentence. If the clean end lands at/near the last take, cut straight to the
     // takeaway rather than flash a fraction of a rolled/unfinished sentence.
-    if (endSec > cursor + 1.0) {
-      items.push({ kind: "source", startSec: cursor, endSec, durSec: endSec - cursor });
-    }
+    if (endSec > cursor + 1.0) pushSource(cursor, endSec);
   }
   items.push({ kind: "takeaway", durSec: takeawayLen });
 
